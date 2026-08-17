@@ -1346,7 +1346,7 @@
   },
   "servers": [
     {
-      "url": "http://localhost:58080/"
+      "url": "http://localhost:8080/"
     }
   ],
   "tags": [

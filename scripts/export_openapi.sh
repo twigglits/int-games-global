@@ -23,9 +23,31 @@ API_BASE_URL="${API_BASE_URL:-http://localhost:${API_HOST_PORT:-8080}}"
 OUTPUT="${1:-${REPO_ROOT}/openapi.json}"
 
 echo "fetching ${API_BASE_URL}/openapi/v1.json"
+# Single quotes on purpose: the Python below must reach the interpreter as
+# written, with no shell expansion. SC2016 warns about exactly the thing that is
+# intended here.
+# shellcheck disable=SC2016
 curl -fsS "${API_BASE_URL}/openapi/v1.json" |
-  python3 -c 'import json,sys; json.dump(json.load(sys.stdin), sys.stdout, indent=2, sort_keys=True); print()' \
-    > "${OUTPUT}"
+  python3 -c '
+import json
+import sys
+
+document = json.load(sys.stdin)
+
+# Canonicalise `servers`. ASP.NET Core derives it from the request host, so the
+# document a developer exports carries whatever port their .env happens to map —
+# `http://localhost:58080/` on a machine that remapped it, `:8080` on a default
+# one. That made the committed artifact depend on who exported it, and CI failed
+# the diff for a reason that had nothing to do with the API contract.
+#
+# The value is not meaningful for a locally exported spec anyway: the deployed
+# API lives behind a domain, not localhost. Pinning it to the documented default
+# keeps the file reproducible from any machine.
+document["servers"] = [{"url": "http://localhost:8080/"}]
+
+json.dump(document, sys.stdout, indent=2, sort_keys=True)
+print()
+' > "${OUTPUT}"
 
 echo "wrote ${OUTPUT}"
 python3 - "${OUTPUT}" <<'PY'
