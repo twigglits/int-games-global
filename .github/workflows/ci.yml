@@ -437,6 +437,10 @@ jobs:
           grep -qE "inserted   : 0" /tmp/second-run.txt
           grep -qE "updated    : 0" /tmp/second-run.txt
 
+      # The Python is inside shell single quotes, so it cannot contain a single
+      # quote — and an escaped double quote inside an f-string expression is a
+      # line continuation, not a string, which is a SyntaxError. Binding the
+      # values to plain names first avoids nesting any quote at all.
       - name: Prometheus is scraping every service
         run: |
           docker compose exec -T prometheus wget -q -O - \
@@ -444,9 +448,15 @@ jobs:
             python3 -c '
           import json, sys
           targets = json.load(sys.stdin)["data"]["activeTargets"]
-          down = [t["labels"]["job"] for t in targets if t["health"] != "up"]
-          for t in targets:
-              print(f"  {t[\"labels\"][\"job\"]:30s} {t[\"health\"]}")
+          down = []
+          for target in targets:
+              job = target["labels"]["job"]
+              health = target["health"]
+              print("  %-30s %s" % (job, health))
+              if health != "up":
+                  down.append(job)
+          if down:
+              print("::error::Prometheus is not scraping: %s" % ", ".join(down))
           sys.exit(1 if down else 0)
           '
 
