@@ -150,7 +150,13 @@ def main() -> int:
     summary = report.render_text()
     print(summary)
     print(f"\nreport written to {report_path}")
-    print(f"log written to    {log_path}\n")
+    # The file sink is best effort — see configure_logging. Claiming a log was
+    # written when the directory was unwritable sends the next person looking
+    # for a file that is not there.
+    if log_path.exists():
+        print(f"log written to    {log_path}\n")
+    else:
+        print(f"log file unavailable ({log_path}); output above is the log\n")
     logger.info(
         "pipeline.finished",
         inserted=report.load.inserted,

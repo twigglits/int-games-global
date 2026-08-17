@@ -336,6 +336,14 @@ jobs:
           } >> .env
           mkdir -p logs/pipeline logs/api
 
+      # The log directories are bind-mounted, and a GitHub runner's uid is 1001
+      # while the containers run as uid 1000. The pipeline now degrades to
+      # stdout-only rather than failing when the mount is unwritable, but the
+      # deliverable says it writes a log file — so make it possible to, and let
+      # CI exercise the path a reviewer will actually get.
+      - name: Make the bind-mounted log directories writable
+        run: chmod -R a+rwX logs
+
       - name: Build the images
         run: docker compose build api mcp-server pipeline
 

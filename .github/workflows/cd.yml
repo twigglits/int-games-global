@@ -38,8 +38,18 @@ jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
+    # A called workflow's jobs cannot ask for more than the caller grants them,
+    # and the run fails at startup — before any step — if they do. So this list
+    # has to cover every permission any job inside ci.yml declares:
+    #
+    #   security        security-events: write   to upload SARIF
+    #   terraform-plan  id-token: write          to assume the AWS role by OIDC
+    #
+    # Adding a permission to a job in ci.yml means adding it here too.
     permissions:
       contents: read
+      security-events: write
+      id-token: write
 
   # --- 2. Build and push the images ---------------------------------------------
   images:

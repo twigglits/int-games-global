@@ -52,10 +52,23 @@ def configure_logging(level: str, log_dir: Path, filename: str = "pipeline.log")
         ],
     )
 
-    handlers: list[logging.Handler] = [
-        logging.StreamHandler(stream=sys.stdout),
-        logging.FileHandler(log_path, encoding="utf-8"),
-    ]
+    handlers: list[logging.Handler] = [logging.StreamHandler(stream=sys.stdout)]
+
+    # The file sink is best effort. A bind-mounted log directory owned by a
+    # different uid than the container's user is unwritable, and so is a
+    # read-only root filesystem — both are ordinary deployment conditions, and
+    # neither is a reason for a data pipeline to refuse to run. stdout is the
+    # sink that always works, and it is the one `docker compose logs` reads.
+    #
+    # This was not hypothetical: the first CI run died here with
+    # PermissionError, because a GitHub runner's uid is 1001 and the container's
+    # `app` user is uid 1000.
+    file_error: OSError | None = None
+    try:
+        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
+    except OSError as exc:
+        file_error = exc
+
     for handler in handlers:
         handler.setFormatter(formatter)
 
@@ -74,6 +87,15 @@ def configure_logging(level: str, log_dir: Path, filename: str = "pipeline.log")
         logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
+
+    # Warned after configuration, so the warning itself goes through the same
+    # formatter and is visible in the run's output rather than swallowed.
+    if file_error is not None:
+        logging.getLogger(__name__).warning(
+            "log file unavailable, continuing with stdout only",
+            extra={"path": str(log_path), "error": str(file_error)},
+        )
+
     return log_path
 
 

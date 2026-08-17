@@ -43,6 +43,14 @@ logs/**
 !logs/
 !logs/*/
 !logs/**/.gitkeep
+
+# Log output written *inside* a service directory. The patterns above are
+# anchored to the repository root, so they do not match a nested path such as
+# api/src/MovieSearch.Api/logs/ — which is where Serilog's file sink writes when
+# the API runs outside a container.
+**/logs/*.json
+**/logs/*.log
+**/logs/*.txt
 data/out/
 *.log
 .DS_Store
