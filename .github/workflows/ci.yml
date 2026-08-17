@@ -1,0 +1,470 @@
+name: CI
+
+# Runs on every pull request into main, and on every push to main so that the
+# branch itself is always known to be green.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  # Called by the delivery workflow, so that delivery runs the same checks
+  # rather than a copy of them that can drift.
+  workflow_call:
+
+# A second push to the same branch cancels the first run. The last commit is the
+# only one anybody is waiting on.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  DOTNET_VERSION: "10.0.x"
+  TERRAFORM_VERSION: "1.14.0"   # 1.11 or later is required: write-only arguments
+
+jobs:
+  # --- Python -----------------------------------------------------------------
+  # The pipeline and the MCP server are separate packages with separate
+  # dependency sets, so they are linted and tested separately. The matrix means a
+  # failure names the service.
+  python:
+    name: Python (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [pipeline, mcp-server]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: ${{ matrix.service }}/pyproject.toml
+
+      - name: Install
+        working-directory: ${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        working-directory: ${{ matrix.service }}
+        run: ruff check --output-format=github .
+
+      - name: Format check (ruff)
+        working-directory: ${{ matrix.service }}
+        run: ruff format --check .
+
+      - name: Type check (mypy, strict)
+        working-directory: ${{ matrix.service }}
+        run: mypy
+
+      - name: Unit tests (pytest)
+        working-directory: ${{ matrix.service }}
+        run: pytest -q --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: ${{ matrix.service }}/coverage.xml
+          if-no-files-found: ignore
+
+  # --- .NET ---------------------------------------------------------------------
+  dotnet:
+    name: .NET API
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Cache NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('api/**/*.csproj') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Restore
+        working-directory: api
+        run: dotnet restore MovieSearch.sln
+
+      - name: Format check
+        working-directory: api
+        run: dotnet format MovieSearch.sln --verify-no-changes --no-restore
+
+      # Warnings are errors in Directory.Build.props, so a build that succeeds
+      # is a build with no analyzer findings.
+      - name: Build
+        working-directory: api
+        run: dotnet build MovieSearch.sln --configuration Release --no-restore
+
+      # xunit.v3 runs on Microsoft.Testing.Platform, which is an executable test
+      # host rather than a VSTest adapter, so the project is run rather than
+      # handed to `dotnet test`.
+      - name: Unit and integration tests
+        working-directory: api
+        run: dotnet run --project tests/MovieSearch.Tests/MovieSearch.Tests.csproj --configuration Release --no-build
+
+  # --- Terraform -------------------------------------------------------------------
+  terraform:
+    name: Terraform (${{ matrix.directory }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory: [terraform, terraform/environments/dev, terraform/environments/prod]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Format check
+        run: terraform fmt -check -recursive -diff terraform
+
+      # `-backend=false` skips the S3 backend, so validation needs no AWS
+      # credentials and runs on every pull request, including from a fork. The
+      # plan does need credentials, and is the separate `terraform-plan` job.
+      - name: Init
+        working-directory: ${{ matrix.directory }}
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        working-directory: ${{ matrix.directory }}
+        run: terraform validate -no-color
+
+      # A regression here would be a secret finding its way back into state, so
+      # it is asserted rather than left to review.
+      - name: No secret value is read into state
+        if: matrix.directory == 'terraform'
+        run: |
+          # Anchored to the start of a block, so a comment explaining why these
+          # are banned does not trip the check that bans them.
+          #
+          # `data "aws_secretsmanager_secret_version"` is the one that matters
+          # most: it differs from the ephemeral resource this repository does use
+          # by a single keyword, and it persists the value.
+          if grep -rnE '^[[:space:]]*data "aws_secretsmanager_secret_version"' terraform/ --include=*.tf; then
+            echo "::error::A data source reads a secret value into state. Use ephemeral aws_secretsmanager_secret_version instead."
+            exit 1
+          fi
+          if grep -rnE '^[[:space:]]*data "aws_ssm_parameter"' terraform/ --include=*.tf; then
+            echo "::error::A data source reads a parameter value into state. Read the config subtree with aws_ssm_parameters_by_path instead."
+            exit 1
+          fi
+          if grep -rnE '^[[:space:]]*resource "random_password"' terraform/ --include=*.tf; then
+            echo "::error::random_password writes a generated secret into state. Secrets come from Secrets Manager."
+            exit 1
+          fi
+          if grep -rnE '^[[:space:]]*resource "aws_secretsmanager_secret_version"' terraform/ --include=*.tf; then
+            echo "::error::Writing a secret version from Terraform puts the value in state."
+            exit 1
+          fi
+          echo "No secret value is read into Terraform state."
+
+  # --- Security ---------------------------------------------------------------------
+  # Trivy covers the ground the language linters cannot: CVEs in pinned
+  # dependencies, credentials committed by accident, and Terraform or Dockerfile
+  # misconfiguration. Same tool and same ignore file as
+  # `./scripts/security_scan.sh`, so a local run and a CI run agree.
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # to upload SARIF to the Security tab
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Dependencies, secrets and IaC. Fails the build on HIGH or CRITICAL.
+      - name: Scan the repository
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          exit-code: "1"
+          format: table
+
+      # A second pass that never fails the build, purely to populate the
+      # Security tab. Splitting it means a finding is both blocking *and*
+      # navigable, rather than only visible in a log.
+      - name: Scan again for the Security tab
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          exit-code: "0"
+          format: sarif
+          output: trivy-repo.sarif
+
+      - name: Upload SARIF
+        if: always() && hashFiles('trivy-repo.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-repo.sarif
+          category: trivy-repo
+
+  # --- Terraform plan ---------------------------------------------------------------
+  # A real plan against the dev account, so a pull request shows what it would
+  # change before anybody merges it.
+  #
+  # It is a separate job from `terraform` above because it needs credentials, and
+  # the checks above must keep running where credentials are absent:
+  #
+  #   * a fork's pull request cannot mint an OIDC token, by design;
+  #   * a clone of this repository has no deployment role until its owner makes one.
+  #
+  # Both cases skip this job and still get fmt, init, validate and the secret
+  # guard. Set the `AWS_DEPLOY_ROLE_ARN` repository variable to switch it on.
+  terraform-plan:
+    name: Terraform plan (dev)
+    needs: [terraform]
+    if: >-
+      vars.AWS_DEPLOY_ROLE_ARN != '' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # to assume the deployment role through OIDC
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: ci-plan-${{ github.run_id }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/dev
+        run: terraform init -input=false
+
+      # `-lock=false` because a plan changes nothing. Taking the state lock here
+      # would let a pull request block a deployment that is already running.
+      - name: Plan
+        working-directory: terraform/environments/dev
+        run: |
+          terraform plan -input=false -lock=false -no-color \
+            -var "image_tag=${{ github.sha }}" -out=dev.tfplan
+
+      - name: Summarise the plan
+        working-directory: terraform/environments/dev
+        run: |
+          {
+            echo "### Terraform plan — dev"
+            echo
+            echo '```'
+            terraform show -no-color dev.tfplan | grep -E '^(Plan:|No changes)' || echo "no summary line"
+            echo '```'
+            echo
+            echo "<details><summary>Full plan</summary>"
+            echo
+            echo '```terraform'
+            terraform show -no-color dev.tfplan | head -500
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # A plan file records every attribute of every resource. It holds no secret
+      # here, but it is not an artefact to leave lying around either.
+      - name: Remove the plan file
+        if: always()
+        working-directory: terraform/environments/dev
+        run: rm -f dev.tfplan
+
+  # --- Images and the full stack -----------------------------------------------------
+  # The integration job is what proves the deliverable: it runs the same
+  # `docker compose up --build` a reviewer runs, waits for every health check,
+  # and then exercises the API end to end.
+  integration:
+    name: Docker Compose integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [python, dotnet]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create the environment file
+        run: |
+          cp .env.example .env
+          # Replace the development placeholders with values generated here, so
+          # that CI never runs on a committed secret.
+          {
+            echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)"
+            echo "Auth__SigningKey=$(openssl rand -base64 48 | tr -d '\n')"
+            echo "READER_CLIENT_SECRET=$(openssl rand -hex 24)"
+            echo "ADMIN_CLIENT_SECRET=$(openssl rand -hex 24)"
+          } >> .env
+          mkdir -p logs/pipeline logs/api
+
+      - name: Build the images
+        run: docker compose build api mcp-server pipeline
+
+      # The images exist here anyway, so scanning them costs one pull of the
+      # Trivy database and catches a CVE on the pull request rather than at
+      # delivery time. The delivery workflow scans again before pushing to ECR —
+      # that one is the gate, this one is the early warning.
+      - name: Scan the built images
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: movie-search-api:local
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan the MCP image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: movie-search-mcp:local
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Scan the pipeline image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: movie-search-pipeline:local
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      # The Embedding Atlas image carries PyTorch and is the bonus feature, so
+      # the integration job leaves it out and keeps the run under the timeout.
+      - name: Start the platform
+        run: |
+          docker compose up -d --wait --wait-timeout 1800 \
+            postgres flyway embeddings pipeline mcp-server api prometheus grafana jaeger
+
+      - name: Show the pipeline report
+        run: docker compose logs pipeline | tail -80
+
+      # A migration that has been applied must never be edited afterwards. This
+      # catches the case where somebody changes V1 and every existing database
+      # then refuses to migrate.
+      - name: Migration checksums are intact
+        run: |
+          docker compose run --rm flyway \
+            -url=jdbc:postgresql://postgres:5432/movies \
+            -user="$(grep '^POSTGRES_USER=' .env | cut -d= -f2-)" \
+            -password="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)" \
+            validate
+
+      - name: Smoke test
+        run: ./scripts/smoke_test.sh
+
+      - name: The exported OpenAPI document matches the committed one
+        run: |
+          ./scripts/export_openapi.sh /tmp/openapi.json
+          if ! diff -u openapi.json /tmp/openapi.json; then
+            echo "::error::openapi.json is out of date. Run ./scripts/export_openapi.sh and commit the result."
+            exit 1
+          fi
+
+      - name: The pipeline is idempotent
+        run: |
+          docker compose run --rm pipeline > /tmp/second-run.txt 2>&1
+          tail -30 /tmp/second-run.txt
+          # A second run must embed nothing and write nothing.
+          grep -qE "embedded   : 0" /tmp/second-run.txt
+          grep -qE "inserted   : 0" /tmp/second-run.txt
+          grep -qE "updated    : 0" /tmp/second-run.txt
+
+      - name: Prometheus is scraping every service
+        run: |
+          docker compose exec -T prometheus wget -q -O - \
+            'http://localhost:9090/api/v1/targets?state=active' | \
+            python3 -c '
+          import json, sys
+          targets = json.load(sys.stdin)["data"]["activeTargets"]
+          down = [t["labels"]["job"] for t in targets if t["health"] != "up"]
+          for t in targets:
+              print(f"  {t[\"labels\"][\"job\"]:30s} {t[\"health\"]}")
+          sys.exit(1 if down else 0)
+          '
+
+      - name: Both services report to Jaeger
+        run: |
+          docker compose exec -T jaeger wget -q -O - http://localhost:16686/api/services | \
+            python3 -c '
+          import json, sys
+          services = set(json.load(sys.stdin)["data"] or [])
+          print("services reporting traces:", sorted(services))
+          missing = {"movie-search-api", "movie-search-mcp"} - services
+          sys.exit(1 if missing else 0)
+          '
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+
+      - name: Stop the platform
+        if: always()
+        run: docker compose down -v --remove-orphans
+
+  # --- The bonus image builds too ----------------------------------------------------
+  # Kept out of the integration job so that a slow PyTorch download cannot fail
+  # the run that matters, while still being built on every pull request.
+  atlas-image:
+    name: Embedding Atlas image
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: embedding-atlas/Dockerfile
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

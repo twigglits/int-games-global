@@ -1,0 +1,445 @@
+name: Destroy
+
+# Tear an environment down, from the Actions tab, to stop it costing money.
+#
+#   Actions -> Destroy -> Run workflow
+#
+# There is no trigger but `workflow_dispatch`. This workflow can never fire from
+# a push, a schedule, or another workflow. Deleting production infrastructure is
+# something a person decides, in a form, on purpose.
+#
+# Four things stand between the button and the deletion:
+#
+#   1. You must type the environment name into `confirm`. A wrong value fails
+#      the guard job before any credential is assumed.
+#   2. Production needs a second phrase as well, so that muscle memory from
+#      tearing down dev cannot take production with it.
+#   3. A destroy plan runs first and is printed to the run summary, so the
+#      resource count is visible before anything is deleted.
+#   4. The `<environment>-teardown` GitHub environment gates the destroy job.
+#      Add a required reviewer there and the run waits for a human.
+#
+# The state bucket, the DynamoDB lock table and the OIDC provider are NOT
+# touched. They are not managed by this configuration, they cost close to
+# nothing, and destroying them would leave you unable to deploy again.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to destroy
+        type: choice
+        options: [dev, prod]
+        default: dev
+        required: true
+      confirm:
+        description: 'Type the environment name exactly: dev or prod'
+        type: string
+        required: true
+      production_phrase:
+        description: 'Production only. Type: destroy production for real'
+        type: string
+        required: false
+        default: ''
+      purge_secrets:
+        description: Also delete the Secrets Manager secrets and the Parameter Store config
+        type: boolean
+        default: false
+      reason:
+        description: Why (recorded in the run summary)
+        type: string
+        required: false
+        default: 'cost control'
+
+# One teardown at a time, and never cancelled part-way. A half-finished destroy
+# is the worst possible state: resources gone, state file disagreeing.
+concurrency:
+  group: destroy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.14.0"
+  AWS_REGION: us-east-1
+
+jobs:
+  # --- 1. Guard ---------------------------------------------------------------------
+  # No credentials are assumed here. If the typed confirmation is wrong, the run
+  # stops before it can touch AWS at all.
+  guard:
+    name: Confirm intent
+    runs-on: ubuntu-latest
+    steps:
+      # Every free-text input reaches the shell through the environment, never
+      # through `${{ }}` interpolation into the script body. An input pasted
+      # straight into a `run:` block is executed as shell, so a value containing
+      # a backtick or `$(...)` would run as code with this job's permissions.
+      - name: Check the typed confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [ "$CONFIRM" != "$ENVIRONMENT" ]; then
+            echo "::error::confirm did not match the environment. Type '$ENVIRONMENT' exactly."
+            exit 1
+          fi
+          echo "confirmation matches '$ENVIRONMENT'"
+
+      # Production asks for a sentence rather than a word. Typing "prod" twice is
+      # something you can do without reading; typing this is not.
+      - name: Production needs a second phrase
+        if: inputs.environment == 'prod'
+        env:
+          PHRASE: ${{ inputs.production_phrase }}
+        run: |
+          if [ "$PHRASE" != "destroy production for real" ]; then
+            echo "::error::Destroying production also needs production_phrase set to exactly: destroy production for real"
+            exit 1
+          fi
+          echo "production phrase accepted"
+
+      - name: Record the request
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          ACTOR: ${{ github.actor }}
+          REASON: ${{ inputs.reason }}
+          PURGE: ${{ inputs.purge_secrets }}
+        run: |
+          {
+            echo "### Teardown requested"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| environment | \`$ENVIRONMENT\` |"
+            echo "| requested by | @$ACTOR |"
+            echo "| reason | $REASON |"
+            echo "| purge secrets | $PURGE |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # --- 2. Plan the destroy -----------------------------------------------------------
+  # Read-only. Shows exactly what would go, and how much of it, before the job
+  # that actually deletes anything starts.
+  plan:
+    name: Plan the destroy
+    needs: [guard]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      to_destroy: ${{ steps.count.outputs.to_destroy }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the teardown role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DESTROY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || env.AWS_REGION }}
+          role-session-name: destroy-plan-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: terraform init -input=false
+
+      # `-lock=false`: a plan changes nothing, and taking the lock here would
+      # block the destroy job that follows it.
+      - name: Plan
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: |
+          terraform plan -destroy -input=false -lock=false -no-color \
+            -var force_destroy=true -out=destroy.tfplan
+
+      - name: Count and summarise
+        id: count
+        working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          LINE="$(terraform show -no-color destroy.tfplan | grep -E '^Plan:' || echo 'Plan: 0 to destroy.')"
+          COUNT="$(echo "$LINE" | grep -oE '[0-9]+ to destroy' | grep -oE '[0-9]+' || echo 0)"
+          echo "to_destroy=$COUNT" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Destroy plan — $ENVIRONMENT"
+            echo
+            echo "**$LINE**"
+            echo
+            echo "<details><summary>Resources to be destroyed</summary>"
+            echo
+            echo '```'
+            terraform show -no-color destroy.tfplan | grep -E '^  # ' | sed 's/^  # //' || true
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Nothing to do
+        if: steps.count.outputs.to_destroy == '0'
+        run: |
+          echo "::notice::This environment has no resources. Nothing will be destroyed."
+
+  # --- 3. Destroy -------------------------------------------------------------------
+  # Gated by the `<environment>-teardown` GitHub environment. Add a required
+  # reviewer to it and this job waits for approval; leave it unprotected and it
+  # runs straight after the plan.
+  destroy:
+    name: Destroy ${{ inputs.environment }}
+    needs: [guard, plan]
+    if: needs.plan.outputs.to_destroy != '0'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-teardown
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the teardown role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DESTROY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || env.AWS_REGION }}
+          role-session-name: destroy-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: terraform init -input=false
+
+      # --- the disarm apply --------------------------------------------------------
+      #
+      # RDS and ALB deletion protection are enforced by AWS on the live resource.
+      # Setting `force_destroy = true` in the config is not enough on its own,
+      # because **a destroy plan contains only delete actions**. Terraform never
+      # emits an update while destroying, so it never turns the flag off — it
+      # goes straight to the delete call, and the API refuses it.
+      #
+      # `depends_on` cannot fix that either. It orders resources against each
+      # other; it cannot make Terraform perform an update it did not plan.
+      #
+      # The fix is one ordinary `apply` first. `force_destroy = true` flips
+      # `deletion_protection` to false on both resources, Terraform updates them
+      # in place, and the destroy that follows has nothing left to refuse. This
+      # is Terraform doing the disarming, declaratively, rather than a CLI call
+      # reaching around it.
+      #
+      # `-target` keeps the apply to exactly those two resources. Targeting is a
+      # blunt instrument and Terraform says so, but this is the case it exists
+      # for: a deliberate, surgical change to named resources that must land
+      # before a wider operation.
+      - name: Read the deployed image tag
+        id: tag
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: |
+          # The apply below has to satisfy every required variable. Reading the
+          # tag back from state means the disarm cannot accidentally roll the
+          # services onto a different image.
+          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            TAG="teardown-placeholder"
+            echo "::warning::No image_tag in state. Using '$TAG'; -target means it reaches no task definition."
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image tag for the disarm apply: $TAG"
+
+      - name: Disarm the deletion guards
+        working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          terraform apply -input=false -auto-approve -no-color \
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG" \
+            -target=module.platform.module.rds.aws_db_instance.this \
+            -target=module.platform.module.alb.aws_lb.this
+
+      # Scaling to zero is genuinely a runtime operation, not a config change:
+      # `desired_count` is managed by autoscaling and Terraform ignores drift on
+      # it. Draining before the destroy keeps Fargate ENIs from still detaching
+      # when the security groups they sit in are deleted, which is the usual
+      # cause of DependencyViolation on a VPC teardown.
+      - name: Drain the services
+        working-directory: terraform/environments/${{ inputs.environment }}
+        continue-on-error: true
+        run: |
+          CLUSTER="$(terraform output -raw ecs_cluster_name 2>/dev/null || true)"
+          [ -z "$CLUSTER" ] && { echo "no cluster in state"; exit 0; }
+          for s in api mcp-server embeddings; do
+            aws ecs update-service --cluster "$CLUSTER" --service "$s" \
+              --desired-count 0 >/dev/null 2>&1 && echo "  scaled $s to 0" \
+              || echo "  $s not present"
+          done
+          for s in api mcp-server embeddings; do
+            aws ecs wait services-stable --cluster "$CLUSTER" --services "$s" 2>/dev/null || true
+          done
+
+      - name: Destroy
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: |
+          terraform destroy -input=false -auto-approve -no-color \
+            -var force_destroy=true
+
+      # A DependencyViolation on a subnet or security group usually means an ENI
+      # was still detaching when Terraform tried to delete it. Retrying once
+      # after a pause clears the common case rather than leaving a half-destroyed
+      # environment that still bills.
+      - name: Retry once if anything is left
+        if: failure()
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: |
+          echo "::warning::First destroy did not complete. Waiting 60s and retrying once."
+          sleep 60
+          terraform destroy -input=false -auto-approve -no-color -var force_destroy=true
+
+  # --- 4. Purge the stores ----------------------------------------------------------
+  # Terraform owns neither store, so both survive a destroy on purpose: you can
+  # tear an environment down and bring it back with the same credentials. This
+  # job removes them only when the form asked for it.
+  purge:
+    name: Purge secrets and configuration
+    needs: [guard, destroy]
+    if: always() && inputs.purge_secrets && needs.destroy.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}-teardown
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Assume the teardown role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DESTROY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || env.AWS_REGION }}
+          role-session-name: destroy-purge-${{ github.run_id }}
+
+      - name: Delete the Parameter Store configuration
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          ROOT="/movie-search/${ENVIRONMENT}"
+          NAMES="$(aws ssm get-parameters-by-path --path "$ROOT" --recursive \
+            --query 'Parameters[].Name' --output text || true)"
+          if [ -z "$NAMES" ]; then echo "no parameters under $ROOT"; exit 0; fi
+          # Guard: refuse anything that is not under this environment's root.
+          for n in $NAMES; do
+            case "$n" in
+              "$ROOT"/*) ;;
+              *) echo "::error::refusing to delete $n — outside $ROOT"; exit 1 ;;
+            esac
+          done
+          # shellcheck disable=SC2086
+          aws ssm delete-parameters --names $NAMES --output json
+          echo "deleted $(echo "$NAMES" | wc -w) parameters"
+
+      # A 7 day recovery window rather than an immediate purge: the secrets cost
+      # $1.60 a month, and recovering from a teardown you regret is worth more
+      # than that. Force the issue with --force-delete-without-recovery if the
+      # name has to be free again immediately.
+      - name: Schedule the secrets for deletion
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          PREFIX="movie-search/${ENVIRONMENT}/"
+          NAMES="$(aws secretsmanager list-secrets --filters "Key=name,Values=$PREFIX" \
+            --query 'SecretList[].Name' --output text || true)"
+          if [ -z "$NAMES" ]; then echo "no secrets under $PREFIX"; exit 0; fi
+          for n in $NAMES; do
+            case "$n" in
+              "$PREFIX"*) aws secretsmanager delete-secret --secret-id "$n" \
+                            --recovery-window-in-days 7 --output text >/dev/null
+                          echo "  scheduled $n for deletion in 7 days" ;;
+              *) echo "::error::refusing to delete $n — outside $PREFIX"; exit 1 ;;
+            esac
+          done
+
+  # --- 5. Prove it is gone -----------------------------------------------------------
+  # The point of the whole workflow is that nothing is still billing. This checks
+  # the four resource types that cost real money, rather than trusting that a
+  # green destroy means an empty account.
+  verify:
+    name: Verify nothing is still billing
+    needs: [guard, destroy]
+    if: always() && needs.destroy.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Assume the teardown role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DESTROY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || env.AWS_REGION }}
+          role-session-name: destroy-verify-${{ github.run_id }}
+
+      - name: Sweep for expensive leftovers
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -uo pipefail
+          PREFIX="movie-search-${ENVIRONMENT}"
+          LEFT=0
+
+          echo "## What is still running" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "| Resource | Still there |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          report() {
+            local label="$1" found="$2"
+            if [ -z "$found" ] || [ "$found" = "None" ]; then
+              echo "| $label | none |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "| $label | **$found** |" >> "$GITHUB_STEP_SUMMARY"
+              LEFT=1
+            fi
+          }
+
+          # ~$55/month
+          report "RDS instances" "$(aws rds describe-db-instances \
+            --query "DBInstances[?starts_with(DBInstanceIdentifier, '$PREFIX')].DBInstanceIdentifier" \
+            --output text 2>/dev/null || true)"
+
+          # ~$33/month each
+          report "NAT gateways" "$(aws ec2 describe-nat-gateways \
+            --filter "Name=tag:Project,Values=movie-search" "Name=state,Values=available,pending" \
+            --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null || true)"
+
+          # ~$17/month each
+          report "Load balancers" "$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?starts_with(LoadBalancerName, '$PREFIX')].LoadBalancerName" \
+            --output text 2>/dev/null || true)"
+
+          # Billed per running task
+          report "Running ECS tasks" "$(aws ecs list-tasks --cluster "$PREFIX-cluster" \
+            --query 'taskArns' --output text 2>/dev/null || true)"
+
+          # Storage only, but it is not free
+          report "RDS snapshots" "$(aws rds describe-db-snapshots --snapshot-type manual \
+            --query "DBSnapshots[?starts_with(DBSnapshotIdentifier, '$PREFIX')].DBSnapshotIdentifier" \
+            --output text 2>/dev/null || true)"
+
+          {
+            echo
+            echo "Left in place on purpose, and costing pennies:"
+            echo "the S3 state bucket, the DynamoDB lock table, and the GitHub OIDC provider."
+            echo "Destroying those would leave you unable to deploy again."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$LEFT" = "1" ]; then
+            echo "::warning::Something is still running. Check the table in the run summary."
+          else
+            echo "::notice::Nothing expensive is left in $ENVIRONMENT."
+          fi

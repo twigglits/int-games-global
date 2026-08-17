@@ -1,0 +1,6 @@
+{
+  "//": "Opts `dotnet test` into Microsoft.Testing.Platform. The .NET 10 SDK no longer supports the VSTest bridge that xunit.v3 used to run through.",
+  "test": {
+    "runner": "Microsoft.Testing.Platform"
+  }
+}

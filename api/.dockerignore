@@ -1,0 +1,10 @@
+# Build output from a host build must never reach the image: it carries
+# restore state that points at paths which do not exist in the container.
+**/bin/
+**/obj/
+**/TestResults/
+**/*.user
+logs/
+.vs/
+.vscode/
+.idea/

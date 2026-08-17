@@ -1,0 +1,486 @@
+{
+  "uid": "movie-search-platform",
+  "title": "Movie Search Platform",
+  "description": "Request rate, latency, error rate, MCP tool latency and connection counts across the .NET API, the Python MCP server and the embedding service. Every query below was written against the metric names these services actually publish.",
+  "tags": ["movie-search", "platform"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "version": 1,
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": { "text": "Prometheus", "value": "movie-search-prometheus" },
+        "hide": 0
+      },
+      {
+        "name": "route",
+        "type": "query",
+        "label": "API route",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(http_server_request_duration_seconds_count{job=\"movie-search-api\", http_route!~\"/health.*|/metrics\"}, http_route)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Service health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Services up",
+      "description": "One tile per scrape target. A target that stops answering shows as down rather than silently contributing nothing.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "up{job=~\"movie-search.*\"}",
+          "legendFormat": "{{job}}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Requests per second",
+      "description": "Business traffic only. The health and metrics routes are excluded, because they are polled on a fixed schedule and would drown the real rate.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"movie-search-api\", http_route!~\"/health.*|/metrics\"}[1m]))",
+          "legendFormat": "req/s",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "decimals": 2, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] } },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "p95 latency",
+      "description": "The requirement is 500 ms at p95. The tile turns amber at 400 ms and red at 500 ms.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"movie-search-api\", http_route=~\"/api/v1.*\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.4 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error rate",
+      "description": "Share of API responses with a 5xx status.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"movie-search-api\", http_response_status_code=~\"5..\"}[5m])) / clamp_min(sum(rate(http_server_request_duration_seconds_count{job=\"movie-search-api\"}[5m])), 0.0001)",
+          "legendFormat": "5xx share",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "title": "API traffic and latency",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Request rate by route",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{job=\"movie-search-api\", http_route=~\"$route\", http_route!~\"/health.*|/metrics\"}[1m]))",
+          "legendFormat": "{{http_route}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "API latency percentiles",
+      "description": "p50, p95 and p99 over the /api/v1 routes. The dashed line is the 500 ms budget.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"movie-search-api\", http_route=~\"/api/v1.*\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"movie-search-api\", http_route=~\"/api/v1.*\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{job=\"movie-search-api\", http_route=~\"/api/v1.*\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.5 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Responses by status code",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "expr": "sum by (http_response_status_code) (rate(http_server_request_duration_seconds_count{job=\"movie-search-api\", http_route!~\"/health.*|/metrics\"}[1m]))",
+          "legendFormat": "{{http_response_status_code}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "5.." }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byRegexp", "options": "4.." }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "200" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Active connections and in-flight requests",
+      "description": "Kestrel connection count and the number of requests being served right now.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "expr": "sum(kestrel_active_connections{job=\"movie-search-api\"})", "legendFormat": "active connections", "refId": "A" },
+        { "expr": "sum(kestrel_queued_connections{job=\"movie-search-api\"})", "legendFormat": "queued connections", "refId": "B" },
+        { "expr": "sum(http_server_active_requests{job=\"movie-search-api\"})", "legendFormat": "in-flight requests", "refId": "C" },
+        { "expr": "sum(mcp_db_pool_connections{job=\"movie-search-mcp\", state=\"total\"})", "legendFormat": "database pool size", "refId": "D" },
+        { "expr": "sum(mcp_db_pool_connections{job=\"movie-search-mcp\", state=\"idle\"})", "legendFormat": "database pool idle", "refId": "E" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "row",
+      "title": "MCP server",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 21 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "MCP tool call latency, p95, seen by the API",
+      "description": "Measured on the .NET side, so it includes the transport. Compare it with the panel to its right, which is measured inside the Python server: the gap between them is the MCP round trip.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(movie_search_mcp_tool_duration_milliseconds_bucket{job=\"movie-search-api\"}[5m])))",
+          "legendFormat": "{{tool}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "MCP tool execution, p95, inside the server",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_tool_duration_seconds_bucket{job=\"movie-search-mcp\"}[5m])))",
+          "legendFormat": "{{tool}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Where a search spends its time",
+      "description": "The embedding call and the vector query are the two costs inside one search. Everything above them on this dashboard is the sum of these plus transport.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 30 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(mcp_embedding_duration_seconds_bucket{job=\"movie-search-mcp\"}[5m])))",
+          "legendFormat": "embed the query, p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, query) (rate(mcp_db_query_duration_seconds_bucket{job=\"movie-search-mcp\"}[5m])))",
+          "legendFormat": "database: {{query}}, p95",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "MCP tool calls by outcome",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 30 },
+      "targets": [
+        {
+          "expr": "sum by (tool, status) (rate(mcp_tool_calls_total{job=\"movie-search-mcp\"}[1m]))",
+          "legendFormat": "{{tool}} {{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*error.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "row",
+      "title": "Cache, rate limiting and the embedding service",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 37 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Response cache hit ratio",
+      "description": "Share of searches served from memory. Every hit is one embedding call and one vector scan that did not happen.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 38 },
+      "targets": [
+        {
+          "expr": "sum(rate(movie_search_cache_lookups_total{job=\"movie-search-api\", outcome=\"hit\"}[5m])) / clamp_min(sum(rate(movie_search_cache_lookups_total{job=\"movie-search-api\"}[5m])), 0.0001)",
+          "legendFormat": "hit ratio",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Rate limiting",
+      "description": "A rejected lease is a client that exceeded 60 requests per minute.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 38 },
+      "targets": [
+        {
+          "expr": "sum by (aspnetcore_rate_limiting_result) (rate(aspnetcore_rate_limiting_requests_total{job=\"movie-search-api\"}[1m]))",
+          "legendFormat": "{{aspnetcore_rate_limiting_result}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "custom": { "drawStyle": "bars", "fillOpacity": 60, "stacking": { "mode": "normal" } } },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*rejected.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "acquired" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Embedding service",
+      "description": "Text Embeddings Inference: queue depth and inference time. A rising queue is the first sign that the model container is the bottleneck.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 38 },
+      "targets": [
+        { "expr": "sum(te_queue_size{job=\"movie-search-embeddings\"})", "legendFormat": "queue size", "refId": "A" },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(te_embed_inference_duration_bucket{job=\"movie-search-embeddings\"}[5m])))",
+          "legendFormat": "inference p95",
+          "refId": "B"
+        },
+        { "expr": "sum(rate(te_embed_count{job=\"movie-search-embeddings\"}[1m]))", "legendFormat": "embeddings/s", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "inference p95" }, "properties": [{ "id": "unit", "value": "s" }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Results returned per search",
+      "description": "A drift towards zero means the filters are rejecting everything, which no latency panel would show.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 45 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(mcp_search_results_returned_bucket{job=\"movie-search-mcp\"}[5m])))",
+          "legendFormat": "median results",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(mcp_search_results_returned_sum{job=\"movie-search-mcp\"}[5m])) / clamp_min(sum(rate(mcp_search_results_returned_count{job=\"movie-search-mcp\"}[5m])), 0.0001)",
+          "legendFormat": "mean results",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Runtime",
+      "description": "Managed heap and thread pool of the .NET API. A climbing heap with flat traffic is a leak.",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 45 },
+      "targets": [
+        { "expr": "dotnet_process_memory_working_set_bytes{job=\"movie-search-api\"}", "legendFormat": "working set", "refId": "A" },
+        { "expr": "dotnet_gc_last_collection_heap_size_bytes{job=\"movie-search-api\"}", "legendFormat": "heap after gc", "refId": "B" },
+        { "expr": "dotnet_thread_pool_thread_count_total{job=\"movie-search-api\"}", "legendFormat": "thread pool threads", "refId": "C" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "thread pool threads" }, "properties": [{ "id": "unit", "value": "short" }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

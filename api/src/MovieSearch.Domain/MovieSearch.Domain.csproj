@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The innermost layer. It references nothing: no ASP.NET Core, no MCP client,
+    no serializer. That is what lets the search rules be tested without starting
+    anything.
+  -->
+  <PropertyGroup>
+    <RootNamespace>MovieSearch.Domain</RootNamespace>
+  </PropertyGroup>
+
+</Project>

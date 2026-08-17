@@ -1,0 +1,49 @@
+# Findings accepted deliberately.
+#
+# Every entry needs three things: the id, why it is accepted, and a date to look
+# at it again. An ignore without a reason is a finding somebody forgot, not one
+# anybody decided about — and it will still be here in a year.
+#
+# Prefer fixing over ignoring. Trivy's first run on this repository found eleven
+# things; one of them was real and was fixed rather than listed here (the VPC
+# endpoint security group allowed egress to 0.0.0.0/0 for "return traffic",
+# which stateful security groups do not need — it is now confined to the VPC).
+# The rest are below, because they are the design rather than defects in it.
+
+# --- The load balancer is meant to be public ------------------------------------
+# AWS-0053: "Load balancer is exposed publicly."
+# The deliverable is a public, internet-facing API. An internal-only load
+# balancer would not serve it. HTTPS only, HTTP redirects, and everything behind
+# it sits in private subnets with no route in except through the listener.
+# Review: 2027-02-01
+AWS-0053
+
+# --- Public subnets are meant to assign public IPs -------------------------------
+# AWS-0164: "Subnet associates public IP address."
+# This is what makes a public subnet public. Only the NAT gateways and the load
+# balancer live there. Every task and the database are in private or database
+# subnets; the database tier has no route to a NAT gateway at all.
+# Review: 2027-02-01
+AWS-0164
+
+# --- Task egress is open, and needs to be ----------------------------------------
+# AWS-0104: "Security group rule allows unrestricted egress to any IP address."
+# The remaining instance is the ECS task security group. Tasks pull images from
+# ECR, download the embedding model on first start, and write to CloudWatch.
+# In prod the interface VPC endpoints keep most of that off the public internet,
+# but the model download is a genuine outbound call to the internet.
+#
+# Closing this properly means an egress rule per destination prefix list, which
+# is worth doing when the image set stops changing. It is a real hardening item,
+# not a false positive — it is listed here so it stays visible.
+# Review: 2027-02-01
+AWS-0104
+
+# --- Dev image tags are mutable on purpose ---------------------------------------
+# AWS-0031: "Repository tags are mutable."
+# `image_tag_mutability` is a variable: MUTABLE in dev so a tag can be
+# overwritten on every push, IMMUTABLE in prod so nobody has to ask which code is
+# running. The finding fires against the dev environment, where it is the
+# intended setting.
+# Review: 2027-02-01
+AWS-0031

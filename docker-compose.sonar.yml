@@ -1,0 +1,52 @@
+# SonarQube, for local code quality analysis.
+#
+#   ./scripts/sonar_scan.sh
+#
+# Deliberately a **separate compose file**. The platform's own docker-compose.yml
+# is the deliverable: a reviewer runs `docker compose up --build` and gets nine
+# services and nothing else. SonarQube is a development tool that wants 2 GB of
+# memory and an Elasticsearch index, and it has no business starting when
+# somebody just wants to search for a film.
+#
+# Start it on its own:
+#   docker compose -f docker-compose.sonar.yml up -d
+#   docker compose -f docker-compose.sonar.yml down -v     # and its data
+#
+# On Linux the embedded Elasticsearch needs a raised mmap limit or the container
+# exits on boot. The scan script checks this and tells you the one command to
+# run; it cannot set it for you, because it is a host kernel setting:
+#   sudo sysctl -w vm.max_map_count=262144
+
+services:
+  sonarqube:
+    image: sonarqube:25.1.0.102122-community
+    container_name: movie-search-sonarqube
+    restart: unless-stopped
+    environment:
+      # This is a throwaway local instance analysing a repository you already
+      # have checked out. It holds nothing that is not already on your disk.
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    ports:
+      - "${SONAR_HOST_PORT:-9000}:9000"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    healthcheck:
+      # `/api/system/status` returns UP only once the web server, the database
+      # and the search index are all ready. A port check would pass far too early
+      # and the scanner would fail against a server that is still starting.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 90s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+volumes:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:

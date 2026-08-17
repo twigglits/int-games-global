@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# Prometheus scrape configuration.
+#
+# Every service exposes its own metrics; nothing is pushed. A service that stops
+# answering therefore shows as a gap and as `up == 0`, rather than silently
+# contributing nothing.
+# ---------------------------------------------------------------------------
+global:
+  scrape_interval: 10s
+  scrape_timeout: 5s
+  evaluation_interval: 15s
+  external_labels:
+    platform: movie-search
+    environment: local
+
+scrape_configs:
+  # The .NET API. OpenTelemetry publishes ASP.NET Core, Kestrel, rate limiting
+  # and runtime metrics here, plus the MCP client and cache meters.
+  - job_name: movie-search-api
+    metrics_path: /metrics
+    # The OpenTelemetry exporter publishes OpenTelemetry names, which carry
+    # dots: `http.server.request.duration`. Prometheus 3 stores a UTF-8 name as
+    # it arrives, so without this the series would be named with dots and every
+    # query would need the quoted-name syntax. `legacy` asks the exposer for the
+    # classic underscore spelling, which is what the dashboards and the alerting
+    # rules are written against.
+    metric_name_validation_scheme: legacy
+    static_configs:
+      - targets: ["api:8080"]
+        labels:
+          service: movie-search-api
+          layer: api
+
+  # The Python MCP server. Tool call counts and durations, database query
+  # durations, embedding call durations and connection pool gauges.
+  - job_name: movie-search-mcp
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp-server:8000"]
+        labels:
+          service: movie-search-mcp
+          layer: mcp
+
+  # Text Embeddings Inference publishes its own counters and histograms.
+  - job_name: movie-search-embeddings
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["embeddings:80"]
+        labels:
+          service: movie-search-embeddings
+          layer: model
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus
+          layer: observability

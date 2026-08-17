@@ -1,0 +1,20 @@
+# Root build context. Only the Embedding Atlas image builds from here, and it
+# needs one script, so almost everything else is excluded.
+.git/
+.github/
+api/
+terraform/
+docs/
+logs/
+monitoring/
+database/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/bin/
+**/obj/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.png
+.env

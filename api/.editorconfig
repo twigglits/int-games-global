@@ -1,0 +1,96 @@
+# Formatting rules enforced by `dotnet format --verify-no-changes` in CI.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.{cs,csx}]
+indent_size = 4
+max_line_length = 120
+
+# --- using directives ---
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:error
+
+# --- modern C# style ---
+csharp_style_namespace_declarations = file_scoped:error
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_prefer_braces = true:suggestion
+csharp_style_prefer_primary_constructors = true:suggestion
+dotnet_style_prefer_conditional_expression_over_assignment = true:suggestion
+dotnet_style_readonly_field = true:warning
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:warning
+
+# --- naming ---
+# A constant or a private static readonly field is PascalCase; a private
+# instance field is _camelCase. The specific rules are declared first, because
+# the first matching rule wins.
+dotnet_naming_rule.constants_pascal.severity = warning
+dotnet_naming_rule.constants_pascal.symbols = constant_fields
+dotnet_naming_rule.constants_pascal.style = pascal
+dotnet_naming_symbols.constant_fields.applicable_kinds = field
+dotnet_naming_symbols.constant_fields.required_modifiers = const
+
+dotnet_naming_rule.static_readonly_pascal.severity = warning
+dotnet_naming_rule.static_readonly_pascal.symbols = static_readonly_fields
+dotnet_naming_rule.static_readonly_pascal.style = pascal
+dotnet_naming_symbols.static_readonly_fields.applicable_kinds = field
+dotnet_naming_symbols.static_readonly_fields.required_modifiers = static,readonly
+
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+
+dotnet_naming_style.pascal.capitalization = pascal_case
+dotnet_naming_style.underscore_camel.required_prefix = _
+dotnet_naming_style.underscore_camel.capitalization = camel_case
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.{csproj,props,targets}]
+indent_size = 2
+
+[*.cs]
+# --- analyzer policy ------------------------------------------------------
+# `latest-recommended` is on and warnings are errors. The rules below are
+# switched down deliberately, with the reason for each.
+
+# CA1848 / CA1873: prefer LoggerMessage delegates over ILogger extensions.
+# The log volume here is one line per request plus a handful at startup, and
+# Serilog already defers message formatting until a sink accepts the event.
+# Rewriting every call site as a partial method would add ceremony for a cost
+# this service does not pay.
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none
+
+# CA1031: catch a specific exception type.
+# The places that catch broadly are boundaries — a health probe, an exception
+# handler, a session teardown — where the whole point is that no failure may
+# escape. Each one is commented at the catch site.
+dotnet_diagnostic.CA1031.severity = none
+
+# CA2007: call ConfigureAwait on every await.
+# It is called in the library projects. In the ASP.NET Core host there is no
+# synchronization context, so the rule adds noise without changing behaviour.
+dotnet_diagnostic.CA2007.severity = suggestion
+
+[tests/**/*.cs]
+# CA1707: no underscores in member names.
+# Test method names are sentences. `Search_rejects_an_empty_query` reads in a
+# failure report; `SearchRejectsAnEmptyQuery` does not.
+dotnet_diagnostic.CA1707.severity = none
+# CA1034 / CA1052: nested helper types and static holders inside a test class.
+dotnet_diagnostic.CA1034.severity = none
+# CA2234 / CA1054: string URIs. Test URLs are written as strings on purpose.
+dotnet_diagnostic.CA2234.severity = none
+dotnet_diagnostic.CA1054.severity = none
+dotnet_diagnostic.CA1861.severity = none

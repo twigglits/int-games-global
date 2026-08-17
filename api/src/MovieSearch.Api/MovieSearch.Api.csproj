@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    The entry point: hosting, middleware, endpoints and dependency injection.
+    It references the layers below it and nothing references it back.
+  -->
+  <PropertyGroup>
+    <RootNamespace>MovieSearch.Api</RootNamespace>
+    <UserSecretsId>movie-search-api</UserSecretsId>
+    <!-- Exposes the internal endpoint classes to the test project. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MovieSearch.Application\MovieSearch.Application.csproj" />
+    <ProjectReference Include="..\MovieSearch.Domain\MovieSearch.Domain.csproj" />
+    <ProjectReference Include="..\MovieSearch.Infrastructure\MovieSearch.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Authentication -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.11" />
+
+    <!-- OpenAPI 3.1 document generation, plus the Swagger UI that renders it -->
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.3" />
+
+    <!-- Structured logging -->
+    <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+
+    <!-- Tracing and metrics -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.17.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.17.0-beta.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MovieSearch.Tests" />
+  </ItemGroup>
+
+</Project>

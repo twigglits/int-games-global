@@ -1,0 +1,343 @@
+# ---------------------------------------------------------------------------
+# Intelligent Movie Search Platform — local orchestration.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# The dependency graph brings the platform up in the only order that works:
+#
+#   postgres ─▶ flyway ─┐
+#                       ├─▶ pipeline ─▶ mcp-server ─▶ api
+#   embeddings ─────────┘           └─▶ atlas
+#
+# `flyway` and `pipeline` run to completion and exit. Everything downstream
+# waits for them with `condition: service_completed_successfully`, so the first
+# `docker compose up` on a clean machine ends with a loaded, searchable platform
+# and no manual step in between.
+#
+# The pipeline is idempotent, so a later `docker compose up` re-runs it, finds
+# nothing changed, calls the embedding service zero times and writes no row.
+# ---------------------------------------------------------------------------
+
+name: movie-search-platform
+
+x-postgres-env: &postgres-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: ${POSTGRES_USER:-movies}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  POSTGRES_DB: ${POSTGRES_DB:-movies}
+
+x-embedding-env: &embedding-env
+  EMBEDDINGS_URL: http://embeddings:80
+  EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-BAAI/bge-base-en-v1.5}
+  EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+  EMBEDDING_QUERY_PREFIX: ${EMBEDDING_QUERY_PREFIX:-}
+  EMBEDDING_DOC_PREFIX: ${EMBEDDING_DOC_PREFIX:-}
+
+services:
+  # --- Part 2: PostgreSQL 16 with pgvector -------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: movie-search-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-movies}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-movies}
+      # The database is created once, on the first start of an empty volume.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/queries:/opt/queries:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-movies} -d ${POSTGRES_DB:-movies}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    networks: [movie-search]
+
+  # --- Part 2: schema migrations ------------------------------------------
+  # Flyway rather than Alembic: the schema is SQL-first (a pgvector column type,
+  # an HNSW index, a GIN trigram index) and it is shared by a Python service and
+  # a .NET service. A language-agnostic migrator keeps one owner for the schema.
+  # See README, "Database migrations".
+  flyway:
+    image: flyway/flyway:11
+    container_name: movie-search-flyway
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-movies}
+      -user=${POSTGRES_USER:-movies}
+      -password=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      -connectRetries=20
+      -baselineOnMigrate=true
+      migrate
+    volumes:
+      - ./database/migrations:/flyway/sql:ro
+    networks: [movie-search]
+
+  # --- Part 1: embedding model server -------------------------------------
+  # The model runs in its own container. Neither the pipeline nor the MCP server
+  # loads a model in process; both call this service over HTTP.
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+    container_name: movie-search-embeddings
+    restart: unless-stopped
+    command:
+      - --model-id=${EMBEDDING_MODEL_ID:-BAAI/bge-base-en-v1.5}
+      - --auto-truncate
+      - --port=80
+    ports:
+      - "${EMBEDDINGS_HOST_PORT:-8001}:80"
+    volumes:
+      # The model weights are downloaded once and kept, so a restart is instant.
+      - embeddings-cache:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:80/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks: [movie-search]
+
+  # --- Part 1: data pipeline ----------------------------------------------
+  # Runs to completion and exits. Also runnable on its own:
+  #   docker compose run --rm pipeline
+  pipeline:
+    build:
+      context: ./pipeline
+      dockerfile: Dockerfile
+    image: movie-search-pipeline:local
+    container_name: movie-search-pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
+      embeddings:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *embedding-env]
+      PIPELINE_VERSION: ${PIPELINE_VERSION:-1.0.0}
+      PIPELINE_BATCH_SIZE: ${PIPELINE_BATCH_SIZE:-32}
+      PIPELINE_LOG_LEVEL: ${PIPELINE_LOG_LEVEL:-INFO}
+      PIPELINE_FORCE_REEMBED: ${PIPELINE_FORCE_REEMBED:-false}
+      PIPELINE_MAX_RELEASE_YEAR: ${PIPELINE_MAX_RELEASE_YEAR:-2011}
+      PIPELINE_LOG_DIR: /app/logs
+      PIPELINE_REPORT_DIR: /app/logs
+    volumes:
+      # The run report and the log file land here, readable from the host.
+      - ./logs/pipeline:/app/logs
+    restart: "no"
+    networks: [movie-search]
+
+  # --- Part 3: Python MCP server ------------------------------------------
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    image: movie-search-mcp:local
+    container_name: movie-search-mcp
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      pipeline:
+        condition: service_completed_successfully
+      jaeger:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *embedding-env]
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      MCP_LOG_LEVEL: ${MCP_LOG_LEVEL:-INFO}
+      MCP_DB_POOL_MIN: ${MCP_DB_POOL_MIN:-2}
+      MCP_DB_POOL_MAX: ${MCP_DB_POOL_MAX:-10}
+      SERVICE_NAME: movie-search-mcp
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+    ports:
+      - "${MCP_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [movie-search]
+
+  # --- Part 4: .NET 10 Web API ---------------------------------------------
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: movie-search-api:local
+    container_name: movie-search-api
+    restart: unless-stopped
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_URLS: http://+:8080
+      Logging__Directory: /app/logs
+
+      Mcp__ServerUrl: http://mcp-server:8000
+      Mcp__Transport: ${MCP_TRANSPORT:-sse}
+      Mcp__RequestTimeoutSeconds: "30"
+
+      Cache__Enabled: "true"
+      Cache__TtlSeconds: "60"
+
+      RequestLimits__PermitsPerWindow: "60"
+      RequestLimits__WindowSeconds: "60"
+      RequestLimits__RequestTimeoutSeconds: "30"
+
+      Auth__Issuer: ${Auth__Issuer:-https://movie-search.local}
+      Auth__Audience: ${Auth__Audience:-movie-search-api}
+      Auth__SigningKey: ${Auth__SigningKey:?set Auth__SigningKey in .env}
+      Auth__AccessTokenLifetimeMinutes: ${Auth__AccessTokenLifetimeMinutes:-60}
+      Auth__Clients__0__ClientId: ${READER_CLIENT_ID:-reader-client}
+      Auth__Clients__0__ClientSecret: ${READER_CLIENT_SECRET:?set READER_CLIENT_SECRET in .env}
+      Auth__Clients__0__Roles__0: reader
+      Auth__Clients__1__ClientId: ${ADMIN_CLIENT_ID:-admin-client}
+      Auth__Clients__1__ClientSecret: ${ADMIN_CLIENT_SECRET:?set ADMIN_CLIENT_SECRET in .env}
+      Auth__Clients__1__Roles__0: reader
+      Auth__Clients__1__Roles__1: admin
+
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: movie-search-api
+    ports:
+      - "${API_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./logs/api:/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks: [movie-search]
+
+  # --- Part 4.4: observability ---------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: movie-search-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_HOST_PORT:-16686}:16686"                 # web interface
+      # Published so that a service run outside Compose can still export to it.
+      - "${OTLP_GRPC_HOST_PORT:-4317}:4317"                # OTLP gRPC
+      - "${OTLP_HTTP_HOST_PORT:-4318}:4318"                # OTLP HTTP
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:14269/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    networks: [movie-search]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: movie-search-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_HOST_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9090/-/healthy >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    networks: [movie-search]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: movie-search-grafana
+    restart: unless-stopped
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Opens straight on the platform dashboard, so the demo needs no clicks.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/movie-search.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_HOST_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [movie-search]
+
+  # --- Part 5: Embedding Atlas (bonus) --------------------------------------
+  atlas:
+    build:
+      context: .
+      dockerfile: embedding-atlas/Dockerfile
+    image: movie-search-atlas:local
+    container_name: movie-search-atlas
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pipeline:
+        condition: service_completed_successfully
+    environment:
+      <<: *postgres-env
+      ATLAS_OUTPUT: /data/movies_atlas.parquet
+      ATLAS_PORT: "7000"
+      ATLAS_SAMPLE_SIZE: ${ATLAS_SAMPLE_SIZE:-0}
+    ports:
+      - "${ATLAS_HOST_PORT:-7000}:7000"
+    volumes:
+      - atlas-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:7000/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    networks: [movie-search]
+
+networks:
+  movie-search:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  embeddings-cache:
+  prometheus-data:
+  grafana-data:
+  atlas-data:

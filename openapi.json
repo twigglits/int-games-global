@@ -1,0 +1,1366 @@
+{
+  "components": {
+    "schemas": {
+      "DecadeCountResponse": {
+        "description": "How many movies fall in one decade.",
+        "example": {
+          "count": 612,
+          "decade": 1990
+        },
+        "properties": {
+          "count": {
+            "description": "Number of movies.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "decade": {
+            "description": "Decade written as its first year.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "decade",
+          "count"
+        ],
+        "type": "object"
+      },
+      "GenreCountResponse": {
+        "description": "How many movies carry one genre.",
+        "example": {
+          "count": 789,
+          "genre": "Drama"
+        },
+        "properties": {
+          "count": {
+            "description": "Number of movies.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "genre": {
+            "description": "Genre name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "genre",
+          "count"
+        ],
+        "type": "object"
+      },
+      "GenresResponse": {
+        "description": "The list of genres the catalogue holds.",
+        "example": {
+          "count": 4,
+          "genres": [
+            "Drama",
+            "Comedy",
+            "Action",
+            "Adventure"
+          ]
+        },
+        "properties": {
+          "count": {
+            "description": "Number of distinct genres.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "genres": {
+            "description": "Genre names, most common first.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "genres"
+        ],
+        "type": "object"
+      },
+      "MovieResponse": {
+        "description": "One movie in an API response.",
+        "example": {
+          "blockbuster_flag": true,
+          "budget_tier": "blockbuster",
+          "creative_type": "Historical Fiction",
+          "decade": 1990,
+          "director": "James Cameron",
+          "distributor": "Paramount Pictures",
+          "id": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+          "imdb_rating": 7.4,
+          "imdb_votes": 654000,
+          "imputed_fields": [],
+          "major_genre": "Drama",
+          "mpaa_rating": "PG-13",
+          "production_budget": 200000000,
+          "rating_score_delta": 14,
+          "release_date": "1997-12-19",
+          "release_year": 1997,
+          "rt_rating": 88,
+          "running_time_min": 194,
+          "similarity": 0.8731,
+          "source": "Original Screenplay",
+          "title": "Titanic",
+          "us_gross": 600788188,
+          "worldwide_gross": 1842879955
+        },
+        "properties": {
+          "blockbuster_flag": {
+            "description": "True when the film cleared both blockbuster bars.",
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "budget_tier": {
+            "description": "Budget bucket: micro, low, mid, high or blockbuster.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "creative_type": {
+            "description": "Creative type of the story.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "decade": {
+            "description": "Decade written as its first year, for example 1990.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "director": {
+            "description": "Director.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "distributor": {
+            "description": "Distributor.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "id": {
+            "description": "Stable identifier. Pass it to the similar-movies endpoint.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "imdb_rating": {
+            "description": "IMDB rating from 0 to 10.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "imdb_votes": {
+            "description": "Number of IMDB votes.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "imputed_fields": {
+            "description": "Fields the data pipeline filled in rather than read from the source dataset.\nUse it to exclude estimated values from any analysis.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "major_genre": {
+            "description": "Primary genre.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mpaa_rating": {
+            "description": "MPAA certificate.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "production_budget": {
+            "description": "Production budget in US dollars.",
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "rating_score_delta": {
+            "description": "IMDB rating times ten minus the Rotten Tomatoes score. Positive means\naudiences scored the film above critics.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "release_date": {
+            "description": "Release date, when the source recorded one.",
+            "format": "date",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "release_year": {
+            "description": "Release year, when the source recorded one.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "rt_rating": {
+            "description": "Rotten Tomatoes score from 0 to 100.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "running_time_min": {
+            "description": "Runtime in minutes.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "similarity": {
+            "description": "Cosine similarity to the search query, from 0.0 to 1.0. Null when the movie\nwas fetched by id or title rather than by a search.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "source": {
+            "description": "Source material the film came from.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "description": "Movie title.",
+            "type": "string"
+          },
+          "us_gross": {
+            "description": "US box office in US dollars.",
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "worldwide_gross": {
+            "description": "Worldwide box office in US dollars.",
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "release_date",
+          "release_year",
+          "decade",
+          "major_genre",
+          "creative_type",
+          "source",
+          "mpaa_rating",
+          "director",
+          "distributor",
+          "running_time_min",
+          "production_budget",
+          "us_gross",
+          "worldwide_gross",
+          "imdb_rating",
+          "imdb_votes",
+          "rt_rating",
+          "budget_tier",
+          "blockbuster_flag",
+          "rating_score_delta",
+          "imputed_fields",
+          "similarity"
+        ],
+        "type": "object"
+      },
+      "ProblemDetails": {
+        "example": {
+          "detail": "top_k must be between 1 and 50.",
+          "instance": "/api/v1/movies/search",
+          "parameter": "top_k",
+          "status": 400,
+          "title": "Invalid request",
+          "traceId": "00-e79e5b5e8f35cb27aa25fbdd351befff-991094dec4ca84c6-01",
+          "type": "https://datatracker.ietf.org/doc/html/rfc9110#section-15.5.1"
+        },
+        "properties": {
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "SearchFilters": {
+        "description": "The filters that were applied to a search.",
+        "example": {
+          "decade": null,
+          "genre": null,
+          "min_imdb_rating": null,
+          "mpaa_rating": null
+        },
+        "properties": {
+          "decade": {
+            "description": "Decade filter, or null.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "genre": {
+            "description": "Genre filter, or null.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "min_imdb_rating": {
+            "description": "Minimum IMDB rating filter, or null.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "mpaa_rating": {
+            "description": "MPAA certificate filter, or null.",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "genre",
+          "min_imdb_rating",
+          "mpaa_rating",
+          "decade"
+        ],
+        "type": "object"
+      },
+      "SearchResponse": {
+        "description": "The answer to a movie search.",
+        "example": {
+          "cached": false,
+          "count": 1,
+          "filters": {
+            "decade": null,
+            "genre": null,
+            "min_imdb_rating": null,
+            "mpaa_rating": null
+          },
+          "query": "sci-fi films directed by James Cameron",
+          "results": [
+            {
+              "blockbuster_flag": true,
+              "budget_tier": "blockbuster",
+              "creative_type": "Historical Fiction",
+              "decade": 1990,
+              "director": "James Cameron",
+              "distributor": "Paramount Pictures",
+              "id": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+              "imdb_rating": 7.4,
+              "imdb_votes": 654000,
+              "imputed_fields": [],
+              "major_genre": "Drama",
+              "mpaa_rating": "PG-13",
+              "production_budget": 200000000,
+              "rating_score_delta": 14,
+              "release_date": "1997-12-19",
+              "release_year": 1997,
+              "rt_rating": 88,
+              "running_time_min": 194,
+              "similarity": 0.8731,
+              "source": "Original Screenplay",
+              "title": "Titanic",
+              "us_gross": 600788188,
+              "worldwide_gross": 1842879955
+            }
+          ],
+          "took_ms": 118.4,
+          "top_k": 10
+        },
+        "properties": {
+          "cached": {
+            "description": "True when the answer came from the response cache.",
+            "type": "boolean"
+          },
+          "count": {
+            "description": "Number of results returned.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "filters": {
+            "$ref": "#/components/schemas/SearchFilters",
+            "description": "The filters that were applied."
+          },
+          "query": {
+            "description": "The query that was run, after trimming.",
+            "type": "string"
+          },
+          "results": {
+            "description": "Movies ordered by similarity, best first.",
+            "items": {
+              "$ref": "#/components/schemas/MovieResponse"
+            },
+            "type": "array"
+          },
+          "took_ms": {
+            "description": "Server-side time in milliseconds.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "number",
+              "string"
+            ]
+          },
+          "top_k": {
+            "description": "Number of results that were asked for.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "query",
+          "count",
+          "top_k",
+          "filters",
+          "cached",
+          "took_ms",
+          "results"
+        ],
+        "type": "object"
+      },
+      "SimilarMoviesResponse": {
+        "description": "The neighbours of one movie.",
+        "example": {
+          "count": 1,
+          "movie_id": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+          "results": [
+            {
+              "blockbuster_flag": true,
+              "budget_tier": "blockbuster",
+              "creative_type": "Historical Fiction",
+              "decade": 1990,
+              "director": "James Cameron",
+              "distributor": "Paramount Pictures",
+              "id": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+              "imdb_rating": 7.4,
+              "imdb_votes": 654000,
+              "imputed_fields": [],
+              "major_genre": "Drama",
+              "mpaa_rating": "PG-13",
+              "production_budget": 200000000,
+              "rating_score_delta": 14,
+              "release_date": "1997-12-19",
+              "release_year": 1997,
+              "rt_rating": 88,
+              "running_time_min": 194,
+              "similarity": 0.8731,
+              "source": "Original Screenplay",
+              "title": "Titanic",
+              "us_gross": 600788188,
+              "worldwide_gross": 1842879955
+            }
+          ]
+        },
+        "properties": {
+          "count": {
+            "description": "Number of neighbours returned.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "movie_id": {
+            "description": "The movie the neighbours were computed for.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "results": {
+            "description": "Neighbours ordered by similarity, best first.",
+            "items": {
+              "$ref": "#/components/schemas/MovieResponse"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "movie_id",
+          "count",
+          "results"
+        ],
+        "type": "object"
+      },
+      "StatsResponse": {
+        "description": "Summary statistics for the loaded dataset.",
+        "example": {
+          "average_imdb_rating": 6.28,
+          "average_rt_rating": 53.7,
+          "distinct_directors": 1452,
+          "distinct_distributors": 172,
+          "distinct_genres": 13,
+          "earliest_release_year": 1915,
+          "embedding_dimension": 768,
+          "embedding_model": "BAAI/bge-base-en-v1.5",
+          "last_updated": "2026-08-17T09:14:22+00:00",
+          "latest_release_year": 2011,
+          "median_production_budget": 25000000,
+          "movies_per_decade": [
+            {
+              "count": 612,
+              "decade": 1990
+            }
+          ],
+          "movies_per_genre": [
+            {
+              "count": 789,
+              "genre": "Drama"
+            }
+          ],
+          "movies_with_embeddings": 3200,
+          "pipeline_version": "1.0.0",
+          "total_movies": 3200,
+          "total_worldwide_gross": 285000000000
+        },
+        "properties": {
+          "average_imdb_rating": {
+            "description": "Mean IMDB rating.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "average_rt_rating": {
+            "description": "Mean Rotten Tomatoes score.",
+            "format": "double",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ]
+          },
+          "distinct_directors": {
+            "description": "Number of distinct directors.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "distinct_distributors": {
+            "description": "Number of distinct distributors.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "distinct_genres": {
+            "description": "Number of distinct genres.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "earliest_release_year": {
+            "description": "Lowest release year.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "embedding_dimension": {
+            "description": "Width of the stored vectors.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "embedding_model": {
+            "description": "Model that produced the vectors.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "last_updated": {
+            "description": "Newest update timestamp in the catalogue.",
+            "format": "date-time",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "latest_release_year": {
+            "description": "Highest release year.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "median_production_budget": {
+            "description": "Median budget in US dollars.",
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          },
+          "movies_per_decade": {
+            "description": "Row count per decade, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/DecadeCountResponse"
+            },
+            "type": "array"
+          },
+          "movies_per_genre": {
+            "description": "Row count per genre, largest first.",
+            "items": {
+              "$ref": "#/components/schemas/GenreCountResponse"
+            },
+            "type": "array"
+          },
+          "movies_with_embeddings": {
+            "description": "Rows that carry a vector and are searchable.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "pipeline_version": {
+            "description": "Version of the pipeline that last wrote a row.",
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "total_movies": {
+            "description": "Rows in the catalogue.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "total_worldwide_gross": {
+            "description": "Sum of the known worldwide box office.",
+            "format": "int64",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "total_movies",
+          "movies_with_embeddings",
+          "distinct_genres",
+          "distinct_directors",
+          "distinct_distributors",
+          "earliest_release_year",
+          "latest_release_year",
+          "average_imdb_rating",
+          "average_rt_rating",
+          "median_production_budget",
+          "total_worldwide_gross",
+          "movies_per_genre",
+          "movies_per_decade",
+          "embedding_model",
+          "embedding_dimension",
+          "pipeline_version",
+          "last_updated"
+        ],
+        "type": "object"
+      },
+      "TokenRequest": {
+        "description": "A client-credentials token request.",
+        "example": {
+          "client_id": "reader-client",
+          "client_secret": "reader-secret-change-me",
+          "grant_type": "client_credentials"
+        },
+        "properties": {
+          "client_id": {
+            "description": "Client identifier.",
+            "type": "string"
+          },
+          "client_secret": {
+            "description": "Client secret.",
+            "type": "string"
+          },
+          "grant_type": {
+            "description": "OAuth 2.0 grant type. Only `client_credentials` is supported. The field\nmay be omitted, in which case `client_credentials` is assumed.",
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        },
+        "required": [
+          "client_id",
+          "client_secret"
+        ],
+        "type": "object"
+      },
+      "TokenResponse": {
+        "description": "A successfully issued access token.",
+        "example": {
+          "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZWFkZXIt...",
+          "expires_in": 3600,
+          "roles": [
+            "reader"
+          ],
+          "token_type": "Bearer"
+        },
+        "properties": {
+          "access_token": {
+            "description": "The signed JWT. Send it as `Authorization: Bearer &lt;token&gt;`.",
+            "type": "string"
+          },
+          "expires_in": {
+            "description": "Lifetime of the token in seconds.",
+            "format": "int32",
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "roles": {
+            "description": "Roles the token grants.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "token_type": {
+            "description": "Always `Bearer`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_token",
+          "token_type",
+          "expires_in",
+          "roles"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "description": "A JWT obtained from `POST /auth/token`. Send it as `Authorization: Bearer <token>`.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "contact": {
+      "name": "Movie Search Platform"
+    },
+    "description": "Semantic search over a movie catalogue.\n\nThe API translates a natural language query into a vector, narrows the catalogue with the metadata filters supplied, and returns the closest matches with their similarity scores. The search itself runs on a Python MCP server backed by PostgreSQL with pgvector.\n\n**Getting a token.** Every `/api/v1/*` route needs a bearer token. Post your client id and secret to `/auth/token`, then send the returned token as `Authorization: Bearer <token>`.\n\n**Roles.** A `reader` token may search and read movies. A `admin` token may do that and also read `/api/v1/stats`.\n\n**Rate limit.** 60 requests per minute per client. A rejected request answers 429 and carries a `Retry-After` header.",
+    "license": {
+      "name": "MIT"
+    },
+    "title": "Intelligent Movie Search API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.1",
+  "paths": {
+    "/api/v1/movies/genres": {
+      "get": {
+        "description": "The values returned here are the accepted values of the `genre` filter.",
+        "operationId": "ListGenres",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenresResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "List every genre in the catalogue.",
+        "tags": [
+          "Movies"
+        ]
+      }
+    },
+    "/api/v1/movies/search": {
+      "get": {
+        "description": "Runs a semantic vector search over the catalogue and narrows it with the metadata filters supplied. The description is matched by meaning; every filter is an exact match. Results are ordered by similarity, best first.",
+        "operationId": "SearchMovies",
+        "parameters": [
+          {
+            "example": "sci-fi films directed by James Cameron",
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "example": 10,
+            "in": "query",
+            "name": "top_k",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          },
+          {
+            "example": "Action",
+            "in": "query",
+            "name": "genre",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "example": 7.5,
+            "in": "query",
+            "name": "min_imdb_rating",
+            "schema": {
+              "format": "double",
+              "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+              "type": [
+                "number",
+                "string"
+              ]
+            }
+          },
+          {
+            "example": "PG-13",
+            "in": "query",
+            "name": "mpaa_rating",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "example": 1990,
+            "in": "query",
+            "name": "decade",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "Search movies with a natural language description.",
+        "tags": [
+          "Movies"
+        ]
+      }
+    },
+    "/api/v1/movies/{id}": {
+      "get": {
+        "operationId": "GetMovieById",
+        "parameters": [
+          {
+            "example": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MovieResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "Fetch one movie by its identifier.",
+        "tags": [
+          "Movies"
+        ]
+      }
+    },
+    "/api/v1/movies/{id}/similar": {
+      "get": {
+        "description": "Compares the stored vector of the given movie against every other vector. The movie itself is never in the result.",
+        "operationId": "GetSimilarMovies",
+        "parameters": [
+          {
+            "example": "3f1b9c48-1c2e-4a5f-9f3a-6d1c0b2e7a41",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "example": 10,
+            "in": "query",
+            "name": "top_k",
+            "schema": {
+              "format": "int32",
+              "pattern": "^-?(?:0|[1-9]\\d*)$",
+              "type": [
+                "integer",
+                "string"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarMoviesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "Fetch the movies closest in meaning to one movie.",
+        "tags": [
+          "Movies"
+        ]
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "description": "Requires the `admin` role. A `reader` token receives 403.",
+        "operationId": "GetDatasetStats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "security": [
+          {}
+        ],
+        "summary": "Summary statistics for the loaded dataset.",
+        "tags": [
+          "Statistics"
+        ]
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "description": "Implements the OAuth 2.0 client-credentials grant. Send the client id and secret in a JSON body. The returned token goes in the `Authorization` header as `Bearer <token>` on every `/api/v1/*` request.",
+        "operationId": "IssueToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Exchange client credentials for an access token.",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:58080/"
+    }
+  ],
+  "tags": [
+    {
+      "description": "Obtaining an access token.",
+      "name": "Authentication"
+    },
+    {
+      "description": "Searching and reading movies.",
+      "name": "Movies"
+    },
+    {
+      "description": "Facts about the loaded dataset. Requires the admin role.",
+      "name": "Statistics"
+    }
+  ]
+}

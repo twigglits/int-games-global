@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    Settings shared by every project in the solution. Keeping them here means a
+    new project cannot quietly opt out of nullable reference types or of the
+    warnings-as-errors rule.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- A warning that is allowed to survive is a warning nobody reads. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!--
+      The OpenAPI document generator reads these XML comments, so the published
+      specification carries the same descriptions as the source.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+</Project>

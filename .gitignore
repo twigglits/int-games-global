@@ -1,0 +1,59 @@
+# Secrets — never commit
+.env
+*.pem
+*.pfx
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# .NET
+bin/
+obj/
+TestResults/
+*.user
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+# .terraform.lock.hcl is committed on purpose: it pins the provider versions so
+# that two people, and CI, resolve the same ones.
+*.tfplan
+tfplan*
+
+# Runtime artifacts.
+# The log directories themselves are committed (empty), because Docker Compose
+# bind-mounts them: if they are absent on a clean clone, Docker creates them as
+# root and the container's non-root user cannot write its report there.
+logs/**
+!logs/
+!logs/*/
+!logs/**/.gitkeep
+data/out/
+*.log
+.DS_Store
+
+# Code quality and security tooling output.
+# The findings belong in the tool, or in a pull request comment — not committed
+# as a snapshot that is stale the moment anything changes.
+reports/
+.scannerwork/
+api/coverage/
+trivy-*.sarif
+
+# Dev Docs
+INSTRUCTIONS.md

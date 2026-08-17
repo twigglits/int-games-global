@@ -1,0 +1,310 @@
+name: CD
+
+# Delivery runs on a push to main, after CI has passed on the same commit.
+#
+#   ci  ─▶  push images  ─▶  deploy dev  ─▶  smoke test dev  ─▶  approval  ─▶  deploy prod  ─▶  smoke test prod
+#
+# The approval gate is a GitHub environment with a required reviewer. GitHub
+# holds the job until somebody approves it; nothing here has to poll or sleep.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_prod:
+        description: Also deploy to production
+        type: boolean
+        default: false
+
+# Two deployments of the same environment must never overlap. This queue is not
+# cancelled in progress: cancelling half of a `terraform apply` is worse than
+# waiting for it.
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # required to assume the AWS role through OIDC
+
+env:
+  AWS_REGION: eu-west-1
+  TERRAFORM_VERSION: "1.14.0"
+
+jobs:
+  # --- 1. Everything CI does ----------------------------------------------------
+  # Reusing the workflow rather than copying the steps means the two can never
+  # drift apart.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # --- 2. Build and push the images ---------------------------------------------
+  images:
+    name: Push ${{ matrix.service }} to ECR
+    needs: [ci]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            context: ./api
+          - service: mcp-server
+            context: ./mcp-server
+          - service: pipeline
+            context: ./pipeline
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cd-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build, scan, then push — in that order, deliberately.
+      #
+      # ECR has scan-on-push enabled in Terraform, and that is a useful backstop,
+      # but it reports *after* the image is in the registry: by then it is
+      # deployable and the finding lives in a console somebody has to remember to
+      # open. Scanning the local image first means a vulnerable image never
+      # reaches ECR at all.
+      #
+      # The build runs twice. The second call is a complete cache hit, so it
+      # costs seconds — and it is what produces the provenance and SBOM
+      # attestations, which only exist on a registry push.
+      - name: Build (local, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: false
+          load: true
+          tags: ${{ matrix.service }}:scan-target
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Scan the image before it is pushed
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.service }}:scan-target
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore
+          # A CVE with no published fix is not actionable at build time. It is
+          # still reported; it just does not block a release nobody can unblock.
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          # The commit SHA is the deployable identity. `main-<sha>` exists so
+          # that a human can see where an image came from.
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/${{ matrix.service }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/${{ matrix.service }}:main-${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          provenance: true
+          sbom: true
+
+  # --- 3. Deploy to dev -----------------------------------------------------------
+  deploy-dev:
+    name: Deploy to dev
+    needs: [images]
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+      url: ${{ steps.outputs.outputs.api_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cd-dev-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/dev
+        run: terraform init -input=false
+
+      # The plan is saved and then applied, so what is applied is exactly what
+      # was reviewed. Applying without a saved plan re-plans against whatever
+      # the account looks like at that moment.
+      - name: Plan
+        working-directory: terraform/environments/dev
+        run: |
+          # The domain, zone, certificate and OIDC provider come from Parameter
+          # Store, so the commit being deployed is the only argument left.
+          terraform plan -input=false -out=dev.tfplan \
+            -var "image_tag=${{ github.sha }}"
+
+      - name: Show the plan
+        working-directory: terraform/environments/dev
+        run: terraform show -no-color dev.tfplan | tail -200
+
+      - name: Apply
+        working-directory: terraform/environments/dev
+        run: terraform apply -input=false -auto-approve dev.tfplan
+
+      - name: Collect the outputs
+        id: outputs
+        working-directory: terraform/environments/dev
+        run: |
+          echo "api_url=$(terraform output -raw api_url)" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the services to stabilise
+        run: |
+          for service in api mcp-server embeddings; do
+            echo "waiting for $service"
+            aws ecs wait services-stable \
+              --cluster "${{ steps.outputs.outputs.cluster }}" \
+              --services "$service"
+          done
+
+      # The schema and the data are applied after the services are healthy,
+      # because the pipeline image and the migrations both come from this commit.
+      - name: Run the data pipeline
+        working-directory: terraform/environments/dev
+        run: |
+          COMMAND="$(terraform output -raw pipeline_run_task_command)"
+          TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
+          echo "started $TASK_ARN"
+          aws ecs wait tasks-stopped \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
+          EXIT_CODE="$(aws ecs describe-tasks \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)"
+          echo "pipeline exit code: $EXIT_CODE"
+          test "$EXIT_CODE" = "0"
+
+      - name: Smoke test dev
+        env:
+          API_BASE_URL: ${{ steps.outputs.outputs.api_url }}
+        run: |
+          PREFIX="$(cd terraform/environments/dev && terraform output -raw secret_prefix)"
+          READER_CLIENT_SECRET="$(aws secretsmanager get-secret-value \
+            --secret-id "$PREFIX/clients/reader-client" --query SecretString --output text)"
+          ADMIN_CLIENT_SECRET="$(aws secretsmanager get-secret-value \
+            --secret-id "$PREFIX/clients/admin-client" --query SecretString --output text)"
+          export READER_CLIENT_SECRET ADMIN_CLIENT_SECRET
+          export READER_CLIENT_ID=reader-client ADMIN_CLIENT_ID=admin-client
+          ./scripts/smoke_test.sh
+
+  # --- 4. Manual approval, then production -------------------------------------------
+  # The gate is the `production` GitHub environment. Configure it with required
+  # reviewers; the job waits for one of them before any step runs.
+  deploy-prod:
+    name: Deploy to production
+    needs: [deploy-dev]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy_prod)
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.outputs.outputs.api_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cd-prod-${{ github.run_id }}
+
+      - name: Log in to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # The image that production runs is the identical image dev ran, copied
+      # rather than rebuilt. Rebuilding could produce different bytes from the
+      # same source.
+      - name: Copy the tested image into the production registry
+        run: |
+          for service in api mcp-server pipeline; do
+            docker pull "${{ steps.ecr.outputs.registry }}/movie-search-dev/$service:${{ github.sha }}"
+            docker tag \
+              "${{ steps.ecr.outputs.registry }}/movie-search-dev/$service:${{ github.sha }}" \
+              "${{ steps.ecr.outputs.registry }}/movie-search-prod/$service:${{ github.sha }}"
+            docker push "${{ steps.ecr.outputs.registry }}/movie-search-prod/$service:${{ github.sha }}"
+          done
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/prod
+        run: terraform init -input=false
+
+      - name: Plan
+        working-directory: terraform/environments/prod
+        run: |
+          terraform plan -input=false -out=prod.tfplan \
+            -var "image_tag=${{ github.sha }}"
+
+      - name: Show the plan
+        working-directory: terraform/environments/prod
+        run: terraform show -no-color prod.tfplan | tail -300
+
+      - name: Apply
+        working-directory: terraform/environments/prod
+        run: terraform apply -input=false -auto-approve prod.tfplan
+
+      - name: Collect the outputs
+        id: outputs
+        working-directory: terraform/environments/prod
+        run: |
+          echo "api_url=$(terraform output -raw api_url)" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for the services to stabilise
+        run: |
+          for service in api mcp-server embeddings; do
+            aws ecs wait services-stable \
+              --cluster "${{ steps.outputs.outputs.cluster }}" --services "$service"
+          done
+
+      # Production is checked without writing to it. The pipeline is run
+      # separately and deliberately, because it changes data.
+      - name: Smoke test production
+        env:
+          API_BASE_URL: ${{ steps.outputs.outputs.api_url }}
+        run: |
+          curl -fsS "$API_BASE_URL/health" | python3 -m json.tool
+          curl -fsS -o /dev/null -w 'openapi %{http_code}\n' "$API_BASE_URL/openapi/v1.json"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed to production"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| commit | \`${{ github.sha }}\` |"
+            echo "| API | ${{ steps.outputs.outputs.api_url }} |"
+            echo "| cluster | ${{ steps.outputs.outputs.cluster }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
