@@ -841,7 +841,7 @@
       "TokenResponse": {
         "description": "A successfully issued access token.",
         "example": {
-          "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZWFkZXIt...",
+          "access_token": "<JWT: three dot-separated base64url segments, roughly 400 characters>",
           "expires_in": 3600,
           "roles": [
             "reader"

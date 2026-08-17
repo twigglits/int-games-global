@@ -223,8 +223,14 @@ jobs:
           format: sarif
           output: trivy-repo.sarif
 
+      # Never blocking. The gate is the scan above, which has already failed the
+      # job if it found anything; this step only makes the finding navigable in
+      # the Security tab. GitHub's code-scanning API returned 503 during the
+      # first run of this workflow, and a build that goes red because somebody
+      # else's reporting endpoint is down teaches people to ignore red builds.
       - name: Upload SARIF
         if: always() && hashFiles('trivy-repo.sarif') != ''
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-repo.sarif
@@ -399,10 +405,16 @@ jobs:
       # then refuses to migrate.
       - name: Migration checksums are intact
         run: |
+          # `tail -n1` is load-bearing. The step above appends generated values
+          # to a .env that already defines them, so the file holds two
+          # POSTGRES_PASSWORD lines. Docker Compose takes the last one; a bare
+          # grep takes both, and the resulting password contains a newline.
+          # The JDBC driver rejects that as a "Prohibited character", which
+          # surfaces as an unusable connection rather than a bad password.
           docker compose run --rm flyway \
             -url=jdbc:postgresql://postgres:5432/movies \
-            -user="$(grep '^POSTGRES_USER=' .env | cut -d= -f2-)" \
-            -password="$(grep '^POSTGRES_PASSWORD=' .env | cut -d= -f2-)" \
+            -user="$(grep '^POSTGRES_USER=' .env | tail -n1 | cut -d= -f2-)" \
+            -password="$(grep '^POSTGRES_PASSWORD=' .env | tail -n1 | cut -d= -f2-)" \
             validate
 
       - name: Smoke test

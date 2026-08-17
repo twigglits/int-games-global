@@ -96,9 +96,14 @@ internal static class OpenApiExamples
             },
             [typeof(TokenResponse)] = () => new JsonObject
             {
-                // Deliberately truncated. A copyable token in a public document
-                // is an invitation to paste it somewhere it should not go.
-                ["access_token"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJyZWFkZXIt...",
+                // A described shape rather than a token-shaped string, on
+                // purpose. The earlier version began with a real base64url JWT
+                // header, and secret scanners correctly flagged the published
+                // openapi.json for it — a false positive, but one that costs a
+                // reviewer the same time as a true one. A copyable token in a
+                // public document is also an invitation to paste it somewhere it
+                // should not go.
+                ["access_token"] = "<JWT: three dot-separated base64url segments, roughly 400 characters>",
                 ["token_type"] = "Bearer",
                 ["expires_in"] = 3600,
                 ["roles"] = new JsonArray("reader"),
