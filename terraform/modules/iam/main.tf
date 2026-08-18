@@ -164,12 +164,19 @@ resource "aws_iam_role_policy" "task" {
   policy = data.aws_iam_policy_document.task.json
 }
 
+locals {
+  # Both are required. A provider ARN with no subject patterns would build a
+  # StringLike condition with an empty value list, which AWS rejects as an
+  # invalid trust policy — a failure that lands in the middle of an apply.
+  create_github_role = var.github_oidc_provider_arn != null && length(var.github_subject_patterns) > 0
+}
+
 # --- CI/CD deployment role ---------------------------------------------------
 # GitHub Actions assumes this role through OIDC. No long-lived access key is
 # stored in the repository.
 
 data "aws_iam_policy_document" "github_assume" {
-  count = var.github_oidc_provider_arn == null ? 0 : 1
+  count = local.create_github_role ? 1 : 0
 
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -196,7 +203,7 @@ data "aws_iam_policy_document" "github_assume" {
 }
 
 resource "aws_iam_role" "github_deploy" {
-  count = var.github_oidc_provider_arn == null ? 0 : 1
+  count = local.create_github_role ? 1 : 0
 
   name               = "${var.name_prefix}-github-deploy"
   description        = "Assumed by GitHub Actions through OIDC to push images and update services."
@@ -205,7 +212,7 @@ resource "aws_iam_role" "github_deploy" {
 }
 
 data "aws_iam_policy_document" "github_deploy" {
-  count = var.github_oidc_provider_arn == null ? 0 : 1
+  count = local.create_github_role ? 1 : 0
 
   statement {
     sid       = "EcrLogin"
@@ -280,7 +287,7 @@ data "aws_iam_policy_document" "github_deploy" {
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
-  count = var.github_oidc_provider_arn == null ? 0 : 1
+  count = local.create_github_role ? 1 : 0
 
   name   = "${var.name_prefix}-github-deploy"
   role   = aws_iam_role.github_deploy[0].id

@@ -32,9 +32,16 @@ variable "cost_centre" {
 }
 
 variable "github_subject_patterns" {
-  description = "Allowed values of the GitHub OIDC `sub` claim."
+  description = "Allowed values of the GitHub OIDC `sub` claim. GitHub issues ID-qualified subjects (owner@id/repo@id); the plain form is kept for the case where that setting is turned off."
   type        = list(string)
-  default     = []
+  default = [
+    "repo:twigglits/int-games-global:ref:refs/heads/main",
+    "repo:twigglits@51879985/int-games-global@1336288914:ref:refs/heads/main",
+    "repo:twigglits/int-games-global:environment:production",
+    "repo:twigglits@51879985/int-games-global@1336288914:environment:production",
+    "repo:twigglits/int-games-global:environment:prod-teardown",
+    "repo:twigglits@51879985/int-games-global@1336288914:environment:prod-teardown",
+  ]
 }
 
 variable "force_destroy" {
