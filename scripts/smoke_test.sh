@@ -23,14 +23,29 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # real cause. Docker Compose resolves the same conflict the same way: the
 # environment beats the file.
 if [[ -f "${REPO_ROOT}/.env" ]]; then
+  # Two rules, and both matter:
+  #
+  #   1. A later line in the file beats an earlier one. CI builds .env by
+  #      copying .env.example and appending generated secrets, so the file
+  #      genuinely holds two READER_CLIENT_SECRET lines and only the second is
+  #      real. Reading it into a map first, rather than exporting as we go,
+  #      is what makes the last one win.
+  #   2. An exported variable beats the file entirely, so this script can be
+  #      pointed at a deployed environment without .env overwriting the
+  #      credentials the caller supplied.
+  #
+  # Docker Compose resolves both the same way.
+  declare -A env_file=()
   while IFS='=' read -r env_key env_value; do
     [[ "${env_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    # Already set by the caller, so leave it alone. `${!k+x}` is true for a
-    # variable that is set even when its value is empty.
-    [[ -n "${!env_key+x}" ]] && continue
-    export "${env_key}=${env_value}"
+    env_file["${env_key}"]="${env_value}"
   done < "${REPO_ROOT}/.env"
-  unset env_key env_value
+  for env_key in "${!env_file[@]}"; do
+    # `${!k+x}` is true for a variable that is set even when its value is empty.
+    [[ -n "${!env_key+x}" ]] && continue
+    export "${env_key}=${env_file[${env_key}]}"
+  done
+  unset env_file env_key env_value
 fi
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:${API_HOST_PORT:-8080}}"
