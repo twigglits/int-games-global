@@ -276,6 +276,10 @@ jobs:
 
       - name: Smoke test dev
         env:
+          # The MCP server has no public route by design — see the note in the
+          # script. Without this the two MCP checks fail from a runner, which
+          # would report a healthy deployment as broken.
+          SKIP_MCP_CHECKS: "1"
           API_BASE_URL: ${{ steps.outputs.outputs.api_url }}
         run: |
           PREFIX="$(cd terraform/environments/dev && terraform output -raw secret_prefix)"
@@ -376,6 +380,10 @@ jobs:
 
       - name: Smoke test production
         env:
+          # The MCP server has no public route by design — see the note in the
+          # script. Without this the two MCP checks fail from a runner, which
+          # would report a healthy deployment as broken.
+          SKIP_MCP_CHECKS: "1"
           API_BASE_URL: ${{ steps.outputs.outputs.api_url }}
         run: |
           curl -fsS "$API_BASE_URL/health" | python3 -m json.tool

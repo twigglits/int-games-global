@@ -57,6 +57,7 @@ ADMIN_SECRET="${ADMIN_CLIENT_SECRET:-admin-secret-change-me}"
 
 PASS=0
 FAIL=0
+SKIP=0
 
 green() { printf '\033[32m%s\033[0m\n' "$1"; }
 red() { printf '\033[31m%s\033[0m\n' "$1"; }
@@ -70,6 +71,12 @@ check() {
     red "  FAIL  ${name}: expected ${expected}, got ${actual}"
     FAIL=$((FAIL + 1))
   fi
+}
+
+skip() {
+  local name="$1" reason="$2"
+  printf '\033[33m  SKIP  %s: %s\033[0m\n' "${name}" "${reason}"
+  SKIP=$((SKIP + 1))
 }
 
 check_contains() {
@@ -105,8 +112,20 @@ check "GET /health/ready is 200" 200 "$(status "${API_BASE_URL}/health/ready")"
 check "GET /metrics is 200" 200 "$(status "${API_BASE_URL}/metrics")"
 check "GET /openapi/v1.json is 200" 200 "$(status "${API_BASE_URL}/openapi/v1.json")"
 check "GET /swagger/index.html is 200" 200 "$(status "${API_BASE_URL}/swagger/index.html")"
-check "MCP GET /health is 200" 200 "$(status "${MCP_BASE_URL}/health")"
-check "MCP GET /metrics is 200" 200 "$(status "${MCP_BASE_URL}/metrics")"
+# The MCP server is only reachable where the caller shares its network. Under
+# Docker Compose that is localhost; on AWS it is a Cloud Map name inside the
+# VPC, with no listener rule on the load balancer and deliberately no public
+# route — the API calls it, nobody else does. A delivery workflow therefore sets
+# SKIP_MCP_CHECKS and the result says so, rather than the checks failing for a
+# design decision or, worse, being pointed at the API's own /health and passing
+# for the wrong reason.
+if [[ -n "${SKIP_MCP_CHECKS:-}" ]]; then
+  skip "MCP GET /health is 200" "MCP server is internal to the VPC"
+  skip "MCP GET /metrics is 200" "MCP server is internal to the VPC"
+else
+  check "MCP GET /health is 200" 200 "$(status "${MCP_BASE_URL}/health")"
+  check "MCP GET /metrics is 200" 200 "$(status "${MCP_BASE_URL}/metrics")"
+fi
 
 echo
 echo "-- authentication --------------------------------------------"
@@ -208,10 +227,14 @@ check "a repeated search is served from the cache" "True" "${CACHED}"
 
 echo
 echo "============================================================"
+SKIPPED_NOTE=""
+if [[ "${SKIP}" -gt 0 ]]; then
+  SKIPPED_NOTE=", ${SKIP} skipped"
+fi
 if [[ "${FAIL}" -eq 0 ]]; then
-  green " ALL ${PASS} CHECKS PASSED"
+  green " ALL ${PASS} CHECKS PASSED${SKIPPED_NOTE}"
 else
-  red " ${FAIL} CHECKS FAILED, ${PASS} passed"
+  red " ${FAIL} CHECKS FAILED, ${PASS} passed${SKIPPED_NOTE}"
 fi
 echo "============================================================"
 exit $(( FAIL > 0 ? 1 : 0 ))
