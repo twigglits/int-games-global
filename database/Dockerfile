@@ -19,6 +19,13 @@ FROM flyway/flyway:11
 # versions are skipped, which is what makes the delivery step idempotent.
 COPY migrations /flyway/sql
 
+# Non-root, like every other image here. The other Dockerfiles create an `app`
+# user at uid 1000; this base already has one there (`ubuntu`), so creating a
+# second would collide on the uid. Reusing it gets the same result — uid 1000,
+# no root — without an extra layer. Trivy DS-0002 enforces this, and caught the
+# first version of this file, which had no USER at all.
+USER 1000:1000
+
 # URL, user and password arrive as FLYWAY_* environment variables — the password
 # from Secrets Manager — so no credential is ever written into this image or
 # into a command line.
