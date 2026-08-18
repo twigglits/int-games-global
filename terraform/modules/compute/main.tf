@@ -90,7 +90,14 @@ resource "aws_service_discovery_service" "internal" {
 
   # ECS reports task health to Cloud Map itself, so no health check of its own
   # is configured here.
-  health_check_custom_config {}
+  #
+  # The block is omitted rather than written empty. An empty
+  # `health_check_custom_config {}` is not a no-op: AWS returns nothing for it,
+  # so Terraform reads it as absent from state, plans to add it, and the
+  # attribute forces replacement — on every single apply, for ever. The first
+  # deployment hid this because every resource was being created anyway. The
+  # second one failed on it, because Cloud Map refuses to delete a service that
+  # still has ECS tasks registered against it.
 
   tags = var.tags
 }
