@@ -28,6 +28,11 @@ output "pipeline_run_task_command" {
   value       = module.platform.pipeline_run_task_command
 }
 
+output "migrations_run_task_command" {
+  description = "Ready-made command that applies the database schema once."
+  value       = module.platform.migrations_run_task_command
+}
+
 output "client_secret_arns" {
   description = "Secrets Manager secret per API client. Read one with `aws secretsmanager get-secret-value`."
   value       = module.platform.client_secret_arns

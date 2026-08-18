@@ -45,6 +45,11 @@ variable "pipeline_image" {
   type        = string
 }
 
+variable "migrations_image" {
+  description = "Flyway image carrying this commit's SQL, as repository URL plus tag."
+  type        = string
+}
+
 variable "embeddings_image" {
   description = "Image of the embedding model server."
   type        = string

@@ -41,9 +41,10 @@ locals {
   github_oidc_provider_arn = module.secrets.github_oidc_provider_arn
 
   # An image reference is the repository URL plus the tag the workflow pushed.
-  api_image      = "${module.ecr.repository_urls["api"]}:${var.image_tag}"
-  mcp_image      = "${module.ecr.repository_urls["mcp-server"]}:${var.image_tag}"
-  pipeline_image = "${module.ecr.repository_urls["pipeline"]}:${var.image_tag}"
+  api_image        = "${module.ecr.repository_urls["api"]}:${var.image_tag}"
+  mcp_image        = "${module.ecr.repository_urls["mcp-server"]}:${var.image_tag}"
+  pipeline_image   = "${module.ecr.repository_urls["pipeline"]}:${var.image_tag}"
+  migrations_image = "${module.ecr.repository_urls["migrations"]}:${var.image_tag}"
 }
 
 module "networking" {
@@ -64,7 +65,7 @@ module "ecr" {
   source = "./modules/ecr"
 
   name_prefix          = local.name_prefix
-  repository_names     = ["api", "mcp-server", "pipeline"]
+  repository_names     = ["api", "mcp-server", "pipeline", "migrations"]
   image_tag_mutability = var.image_tag_mutability
   force_delete         = var.force_destroy || var.environment != "prod"
   tags                 = local.common_tags
@@ -145,9 +146,10 @@ module "compute" {
   execution_role_arn = module.iam.execution_role_arn
   task_role_arn      = module.iam.task_role_arn
 
-  api_image      = local.api_image
-  mcp_image      = local.mcp_image
-  pipeline_image = local.pipeline_image
+  api_image        = local.api_image
+  mcp_image        = local.mcp_image
+  pipeline_image   = local.pipeline_image
+  migrations_image = local.migrations_image
 
   database_host                = module.rds.address
   database_port                = module.rds.port

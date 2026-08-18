@@ -28,6 +28,11 @@ output "pipeline_run_task_command" {
   value       = module.platform.pipeline_run_task_command
 }
 
+output "migrations_run_task_command" {
+  description = "Ready-made command that applies the database schema once."
+  value       = module.platform.migrations_run_task_command
+}
+
 output "cloudwatch_dashboard_url" {
   description = "CloudWatch dashboard for this environment."
   value       = module.platform.cloudwatch_dashboard_url

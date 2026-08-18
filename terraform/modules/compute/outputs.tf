@@ -33,6 +33,17 @@ output "pipeline_run_task_command" {
   ])
 }
 
+output "migrations_run_task_command" {
+  description = "Ready-made command that applies the schema once."
+  value = join(" ", [
+    "aws ecs run-task",
+    "--cluster ${aws_ecs_cluster.this.name}",
+    "--task-definition ${aws_ecs_task_definition.migrations.family}",
+    "--launch-type FARGATE",
+    "--network-configuration 'awsvpcConfiguration={subnets=[${join(",", var.private_subnet_ids)}],securityGroups=[${var.security_group_id}],assignPublicIp=DISABLED}'",
+  ])
+}
+
 output "service_discovery_namespace" {
   description = "Private DNS namespace used for service to service calls."
   value       = aws_service_discovery_private_dns_namespace.this.name

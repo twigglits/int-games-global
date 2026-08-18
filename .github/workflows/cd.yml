@@ -116,6 +116,8 @@ jobs:
             context: ./mcp-server
           - service: pipeline
             context: ./pipeline
+          - service: migrations
+            context: ./database
 
     steps:
       - uses: actions/checkout@v4
@@ -244,6 +246,29 @@ jobs:
               --services "$service"
           done
 
+      # The schema first. The pipeline verifies that `movies.embedding` exists
+      # and refuses to run without it, which is exactly what happened on the
+      # first deployment into a clean account: RDS came up empty, because
+      # nothing outside docker-compose had ever applied a migration.
+      #
+      # Flyway skips versions it has already applied, so this is safe to repeat.
+      - name: Apply the database migrations
+        working-directory: terraform/environments/dev
+        run: |
+          COMMAND="$(terraform output -raw migrations_run_task_command)"
+          TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
+          echo "started $TASK_ARN"
+          aws ecs wait tasks-stopped \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
+          EXIT_CODE="$(aws ecs describe-tasks \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)"
+          echo "migration exit code: $EXIT_CODE"
+          # The log is the only place the reason for a failure appears, so print
+          # it here rather than leaving somebody to go and find it.
+          aws logs tail /ecs/movie-search-dev/migrations --since 10m || true
+          test "$EXIT_CODE" = "0"
+
       # The schema and the data are applied after the services are healthy,
       # because the pipeline image and the migrations both come from this commit.
       - name: Run the data pipeline
@@ -304,7 +329,7 @@ jobs:
       # same source.
       - name: Copy the tested image into the production registry
         run: |
-          for service in api mcp-server pipeline; do
+          for service in api mcp-server pipeline migrations; do
             docker pull "${{ steps.ecr.outputs.registry }}/movie-search-dev/$service:${{ github.sha }}"
             docker tag \
               "${{ steps.ecr.outputs.registry }}/movie-search-dev/$service:${{ github.sha }}" \
@@ -350,6 +375,21 @@ jobs:
 
       # Production is checked without writing to it. The pipeline is run
       # separately and deliberately, because it changes data.
+      - name: Apply the database migrations
+        working-directory: terraform/environments/prod
+        run: |
+          COMMAND="$(terraform output -raw migrations_run_task_command)"
+          TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
+          echo "started $TASK_ARN"
+          aws ecs wait tasks-stopped \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
+          EXIT_CODE="$(aws ecs describe-tasks \
+            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)"
+          echo "migration exit code: $EXIT_CODE"
+          aws logs tail /ecs/movie-search-prod/migrations --since 10m || true
+          test "$EXIT_CODE" = "0"
+
       - name: Smoke test production
         env:
           API_BASE_URL: ${{ steps.outputs.outputs.api_url }}

@@ -43,6 +43,11 @@ output "pipeline_run_task_command" {
   value       = module.compute.pipeline_run_task_command
 }
 
+output "migrations_run_task_command" {
+  description = "Ready-made command that applies the database schema once."
+  value       = module.compute.migrations_run_task_command
+}
+
 output "database_endpoint" {
   description = "RDS endpoint. It is reachable from the private subnets only."
   value       = module.rds.endpoint

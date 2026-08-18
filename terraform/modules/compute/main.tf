@@ -98,7 +98,7 @@ resource "aws_service_discovery_service" "internal" {
 # --- log groups --------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "service" {
-  for_each = toset(["api", "mcp-server", "embeddings", "pipeline"])
+  for_each = toset(["api", "mcp-server", "embeddings", "pipeline", "migrations"])
 
   name              = "${local.log_group_prefix}/${each.value}"
   retention_in_days = var.log_retention_days
@@ -415,6 +415,66 @@ resource "aws_ecs_service" "api" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+}
+
+# --- database migration task -------------------------------------------------
+# Flyway, run once per deployment before the pipeline. It has to be a task
+# rather than a step on the runner because RDS has no public address: only
+# something inside the VPC can reach it.
+#
+# Running it again is a no-op. Flyway records applied versions in its own
+# history table and skips them, so the delivery workflow can retry without
+# having to reason about what already ran.
+
+resource "aws_ecs_task_definition" "migrations" {
+  family                   = "${var.name_prefix}-migrations"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 512
+  memory                   = 1024
+  execution_role_arn       = var.execution_role_arn
+  task_role_arn            = var.task_role_arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name      = "migrations"
+      image     = var.migrations_image
+      essential = true
+
+      environment = [
+        { name = "FLYWAY_URL", value = "jdbc:postgresql://${var.database_host}:${var.database_port}/${var.database_name}" },
+        { name = "FLYWAY_USER", value = var.database_username },
+        # RDS accepts connections before it finishes its first start, and a
+        # task that begins the moment the instance appears can arrive first.
+        { name = "FLYWAY_CONNECT_RETRIES", value = "20" },
+        # The first migration runs against a database RDS already created, so
+        # Flyway must adopt it rather than refuse a non-empty schema.
+        { name = "FLYWAY_BASELINE_ON_MIGRATE", value = "true" },
+      ]
+
+      # Never a command-line argument: anything on argv is visible in the task
+      # definition, in the console and in `describe-tasks`.
+      secrets = [
+        { name = "FLYWAY_PASSWORD", valueFrom = var.database_password_secret_arn },
+      ]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.service["migrations"].name
+          "awslogs-region"        = data.aws_region.current.region
+          "awslogs-stream-prefix" = "migrations"
+        }
+      }
+    },
+  ])
+
+  tags = merge(var.tags, { Service = "migrations" })
 }
 
 # --- data pipeline task ------------------------------------------------------
