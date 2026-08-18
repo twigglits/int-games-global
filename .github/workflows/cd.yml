@@ -2,7 +2,7 @@ name: CD
 
 # Delivery runs on a push to main, after CI has passed on the same commit.
 #
-#   ci  ─▶  push images  ─▶  deploy dev  ─▶  smoke test dev  ─▶  approval  ─▶  deploy prod  ─▶  smoke test prod
+#   ci  ─▶  create ECR  ─▶  push images  ─▶  deploy dev  ─▶  smoke test dev  ─▶  approval  ─▶  deploy prod  ─▶  smoke test prod
 #
 # The approval gate is a GitHub environment with a required reviewer. GitHub
 # holds the job until somebody approves it; nothing here has to poll or sleep.
@@ -51,10 +51,60 @@ jobs:
       security-events: write
       id-token: write
 
+  # --- 2. Create the registries the push needs ----------------------------------
+  # Chicken and egg. `images` pushes into ECR, but ECR is created by Terraform in
+  # `deploy-dev`, which runs after it. ECR does not create a repository on push,
+  # so the first delivery into a clean account died here with
+  #
+  #   unknown: The repository with name 'movie-search-dev/api' does not exist
+  #
+  # and would have kept working on every later run, which is why the ordering
+  # survived review.
+  #
+  # A targeted apply of the ECR module alone fixes the order without taking the
+  # repositories out of Terraform's hands: no `aws ecr create-repository` to
+  # drift from the configuration, no `terraform import` to remember. On every
+  # run after the first this is a no-op.
+  ecr:
+    name: Create the ECR repositories
+    needs: [ci]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assume the deployment role
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: cd-ecr-${{ github.run_id }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Init
+        working-directory: terraform/environments/dev
+        run: terraform init -input=false
+
+      # -target is normally a smell. It is correct here: this is a bootstrap
+      # step whose whole purpose is to bring one module up before the rest of
+      # the graph can be built at all.
+      - name: Apply the ECR module only
+        working-directory: terraform/environments/dev
+        run: |
+          terraform apply -input=false -auto-approve -no-color \
+            -target=module.platform.module.ecr \
+            -var "image_tag=${{ github.sha }}"
+
+      - name: Show what exists now
+        run: aws ecr describe-repositories --query 'repositories[].repositoryName' --output table
+
   # --- 2. Build and push the images ---------------------------------------------
   images:
     name: Push ${{ matrix.service }} to ECR
-    needs: [ci]
+    needs: [ecr]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
