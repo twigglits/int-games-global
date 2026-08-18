@@ -14,9 +14,24 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Load .env, but let a real environment variable win.
+#
+# `set -a && source .env` does the opposite: it overwrites what the caller
+# exported. That is wrong here and it wasted a debugging session — running this
+# against the deployed API with the AWS client secrets exported still
+# authenticated with the local development secrets from .env, got a 401 with an
+# empty body, and failed with a JSON decode error that said nothing about the
+# real cause. Docker Compose resolves the same conflict the same way: the
+# environment beats the file.
 if [[ -f "${REPO_ROOT}/.env" ]]; then
-  # shellcheck disable=SC1091
-  set -a && source "${REPO_ROOT}/.env" && set +a
+  while IFS='=' read -r env_key env_value; do
+    [[ "${env_key}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    # Already set by the caller, so leave it alone. `${!k+x}` is true for a
+    # variable that is set even when its value is empty.
+    [[ -n "${!env_key+x}" ]] && continue
+    export "${env_key}=${env_value}"
+  done < "${REPO_ROOT}/.env"
+  unset env_key env_value
 fi
 
 API_BASE_URL="${API_BASE_URL:-http://localhost:${API_HOST_PORT:-8080}}"

@@ -258,16 +258,9 @@ jobs:
           COMMAND="$(terraform output -raw migrations_run_task_command)"
           TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
           echo "started $TASK_ARN"
-          aws ecs wait tasks-stopped \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
-          EXIT_CODE="$(aws ecs describe-tasks \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)"
-          echo "migration exit code: $EXIT_CODE"
-          # The log is the only place the reason for a failure appears, so print
-          # it here rather than leaving somebody to go and find it.
-          aws logs tail /ecs/movie-search-dev/migrations --since 10m || true
-          test "$EXIT_CODE" = "0"
+          "$GITHUB_WORKSPACE/scripts/wait_for_ecs_task.sh" \
+            "${{ steps.outputs.outputs.cluster }}" "$TASK_ARN" \
+            /ecs/movie-search-dev/migrations 900
 
       # The schema and the data are applied after the services are healthy,
       # because the pipeline image and the migrations both come from this commit.
@@ -277,13 +270,9 @@ jobs:
           COMMAND="$(terraform output -raw pipeline_run_task_command)"
           TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
           echo "started $TASK_ARN"
-          aws ecs wait tasks-stopped \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
-          EXIT_CODE="$(aws ecs describe-tasks \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)"
-          echo "pipeline exit code: $EXIT_CODE"
-          test "$EXIT_CODE" = "0"
+          "$GITHUB_WORKSPACE/scripts/wait_for_ecs_task.sh" \
+            "${{ steps.outputs.outputs.cluster }}" "$TASK_ARN" \
+            /ecs/movie-search-dev/pipeline 2400
 
       - name: Smoke test dev
         env:
@@ -381,14 +370,9 @@ jobs:
           COMMAND="$(terraform output -raw migrations_run_task_command)"
           TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
           echo "started $TASK_ARN"
-          aws ecs wait tasks-stopped \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN"
-          EXIT_CODE="$(aws ecs describe-tasks \
-            --cluster "${{ steps.outputs.outputs.cluster }}" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)"
-          echo "migration exit code: $EXIT_CODE"
-          aws logs tail /ecs/movie-search-prod/migrations --since 10m || true
-          test "$EXIT_CODE" = "0"
+          "$GITHUB_WORKSPACE/scripts/wait_for_ecs_task.sh" \
+            "${{ steps.outputs.outputs.cluster }}" "$TASK_ARN" \
+            /ecs/movie-search-prod/migrations 900
 
       - name: Smoke test production
         env:
