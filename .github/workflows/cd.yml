@@ -449,6 +449,25 @@ jobs:
             "${{ steps.outputs.outputs.cluster }}" "$TASK_ARN" \
             /ecs/movie-search-prod/migrations 900
 
+      # Production needs this for the same reason dev does, and it is not
+      # optional: the MCP server's own health check answers 200 only when at
+      # least one movie carries a vector. With an empty table it answers 503,
+      # the API's aggregate health check answers 503 with it, and every API
+      # target fails its ALB health check. Migrations create the schema; only
+      # this step puts rows in it.
+      #
+      # The step is idempotent — it re-embeds nothing that is already current —
+      # so it is safe on every deploy, not just the first.
+      - name: Run the data pipeline
+        working-directory: terraform/environments/prod
+        run: |
+          COMMAND="$(terraform output -raw pipeline_run_task_command)"
+          TASK_ARN="$(eval "$COMMAND" --query 'tasks[0].taskArn' --output text)"
+          echo "started $TASK_ARN"
+          "$GITHUB_WORKSPACE/scripts/wait_for_ecs_task.sh" \
+            "${{ steps.outputs.outputs.cluster }}" "$TASK_ARN" \
+            /ecs/movie-search-prod/pipeline 2400
+
       - name: Smoke test production
         env:
           # The MCP server has no public route by design — see the note in the
@@ -457,6 +476,17 @@ jobs:
           SKIP_MCP_CHECKS: "1"
           API_BASE_URL: ${{ steps.outputs.outputs.api_url }}
         run: |
+          # The pipeline finishes moments before this runs, so the API has only
+          # just started answering 200 on /health/ready. The target group needs
+          # two passes at a 15 second interval before it puts a target back in
+          # service, so a bare curl here races the ALB and reads a 503 from a
+          # deployment that is in fact fine. Wait for the first 200, then test.
+          for attempt in $(seq 1 40); do
+            CODE="$(curl -s -o /dev/null -w '%{http_code}' "$API_BASE_URL/health" || true)"
+            [ "$CODE" = "200" ] && break
+            echo "attempt $attempt: /health answered $CODE, waiting"
+            sleep 15
+          done
           curl -fsS "$API_BASE_URL/health" | python3 -m json.tool
           curl -fsS -o /dev/null -w 'openapi %{http_code}\n' "$API_BASE_URL/openapi/v1.json"
 
