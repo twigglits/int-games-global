@@ -14,16 +14,22 @@ name: CD
 # The approval gate is a GitHub environment with a required reviewer. GitHub
 # holds the job until somebody approves it; nothing here has to poll or sleep.
 on:
-  # dev deploys on every push to develop.
+  # develop deploys dev, main deploys production.
+  #
+  # Production is still only reachable by merging a pull request from develop —
+  # but that is enforced by branch protection on main, not by this trigger.
+  # `main` requires eleven status checks and blocks direct and force pushes, so
+  # a commit can only land there by merging a green pull request. A push to main
+  # therefore already MEANS "a reviewed change was promoted".
+  #
+  # An earlier version used `pull_request: types: [closed]` to say the same
+  # thing. It broke three separate things that are keyed to the branch, because
+  # on a pull request the ref is `refs/pull/N/merge` and not `refs/heads/main`:
+  # the OIDC subject the deployment role trusts, the `production` environment's
+  # branch policy, and the registry bootstrap's own condition. Expressing the
+  # rule once, in branch protection, costs none of that.
   push:
-    branches: [develop]
-  # Production deploys only when a pull request into main is MERGED, and only
-  # when it came from develop. A direct push to main triggers nothing at all —
-  # there is deliberately no `push: main` here. That is the point: production is
-  # reached by promoting develop through review, not by pushing.
-  pull_request:
-    types: [closed]
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       deploy_prod:
@@ -47,12 +53,8 @@ env:
   TERRAFORM_VERSION: "1.14.0"
   # The commit this run delivers, and the tag every image carries.
   #
-  # On the production path this is the pull request's HEAD — the develop commit
-  # that was built, deployed to dev and smoke tested. Production does not
-  # rebuild; it promotes those exact bytes, so it has to ask for them by the tag
-  # they were pushed under. Neither `github.sha` (the merge preview) nor
-  # `merge_commit_sha` names an image that exists.
-  IMAGE_TAG: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  # Every image, plan and deployment in this run is identified by one commit.
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   # --- 1. Everything CI does ----------------------------------------------------
@@ -60,15 +62,6 @@ jobs:
   # drift apart.
   ci:
     name: CI
-    # A pull request that was closed WITHOUT being merged, or merged from some
-    # branch other than develop, is not a delivery. Stopping here rather than in
-    # each deploy job means `ecr` and `images` skip with it — a skipped
-    # dependency skips its dependents — so no build runs for a run that can
-    # never deploy.
-    if: >-
-      github.event_name != 'pull_request'
-      || (github.event.pull_request.merged == true
-          && github.event.pull_request.head.ref == 'develop')
     uses: ./.github/workflows/ci.yml
     # A called workflow's jobs cannot ask for more than the caller grants them,
     # and the run fails at startup — before any step — if they do. So this list
@@ -100,21 +93,11 @@ jobs:
   ecr:
     name: Create the ECR repositories
     needs: [ci]
-    # Building happens on develop. The production path promotes what develop
-    # already built, so this job — which holds no `environment:` and therefore
-    # authenticates as a bare branch subject — never runs there. On a
-    # pull_request event the OIDC subject is `repo:...:pull_request`, which the
-    # deployment role deliberately does not trust: that role is
-    # AdministratorAccess, and pull-request-triggered code must not reach it.
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
         with:
-          # The commit being delivered, not the event's default ref. On a
-          # merged pull request that default is the merge preview, which is
-          # not the commit that landed on main.
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -172,8 +155,6 @@ jobs:
   images:
     name: Push ${{ matrix.service }} to ECR
     needs: [ecr]
-    # Same reasoning as `ecr`: build on develop, promote on main.
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -191,9 +172,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The commit being delivered, not the event's default ref. On a
-          # merged pull request that default is the merge preview, which is
-          # not the commit that landed on main.
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -276,9 +254,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The commit being delivered, not the event's default ref. On a
-          # merged pull request that default is the merge preview, which is
-          # not the commit that landed on main.
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -385,21 +360,13 @@ jobs:
     # it first. On main that job is skipped, and a skipped dependency would
     # normally skip this one too — hence the explicit result checks rather than
     # a bare `needs:`. `!cancelled()` keeps a cancelled run from continuing.
-    needs: [ci, images, deploy-dev]
-    # Production is reached one way: a pull request from develop into main that
-    # was actually merged. `workflow_dispatch` with deploy_prod stays as the
-    # break-glass path for a redeploy without a code change.
+    needs: [images, deploy-dev]
     if: >-
       !cancelled()
-      && needs.ci.result == 'success'
-      && (needs.images.result == 'success' || needs.images.result == 'skipped')
+      && needs.images.result == 'success'
       && (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
-      && (
-           (github.event_name == 'pull_request'
-            && github.event.pull_request.merged == true
-            && github.event.pull_request.head.ref == 'develop')
-           || (github.event_name == 'workflow_dispatch' && inputs.deploy_prod)
-         )
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || inputs.deploy_prod)
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -408,9 +375,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The commit being delivered, not the event's default ref. On a
-          # merged pull request that default is the merge preview, which is
-          # not the commit that landed on main.
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -419,27 +383,6 @@ jobs:
           role-to-assume: ${{ secrets.AWS_PROD_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: cd-prod-${{ github.run_id }}
-
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      # The production registry has to exist before the copy below, and the
-      # apply that would otherwise create it is further down this same job. It
-      # is bootstrapped here rather than in the `ecr` job because this job runs
-      # inside the `production` environment, so its OIDC subject is
-      # `environment:production` — one the deployment role trusts. The `ecr`
-      # job has no environment and could not authenticate on this path at all.
-      - name: Init the production registry
-        working-directory: terraform/environments/prod
-        run: terraform init -input=false
-
-      - name: Apply the ECR module only
-        working-directory: terraform/environments/prod
-        run: |
-          terraform apply -input=false -auto-approve -no-color \
-            -target=module.platform.module.ecr \
-            -var "image_tag=${{ env.IMAGE_TAG }}"
 
       - name: Log in to ECR
         id: ecr
