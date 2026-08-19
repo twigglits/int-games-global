@@ -325,6 +325,40 @@ jobs:
           sleep 60
           terraform destroy -input=false -auto-approve -no-color -var force_destroy=true
 
+      # Delete the log groups Terraform owns but could not remove.
+      #
+      # This is a race, not an oversight. `aws_cloudwatch_log_group.flow_logs`
+      # is destroyed before the flow log that writes to it, and VPC Flow Logs
+      # delivers in batches — a batch landing in that window recreates the group
+      # through the service's own CreateLogGroup permission. The group is then
+      # orphaned, outside state, and the NEXT apply dies on it:
+      #
+      #   Error: creating CloudWatch Logs Log Group
+      #   (/aws/vpc/movie-search-dev/flow-logs): ResourceAlreadyExistsException
+      #
+      # That is exactly what happened: destroyed 2026-08-18 14:09, recreated
+      # 14:11, and it blocked the redeploy the following morning.
+      #
+      # Only groups this stack names are removed. RDSOSMetrics is deliberately
+      # left alone — it is account-wide and shared with every RDS instance,
+      # including ones this project knows nothing about.
+      - name: Remove log groups orphaned by the destroy
+        if: always()
+        env:
+          PREFIX: movie-search-${{ inputs.environment }}
+        run: |
+          for PATTERN in "/aws/vpc/${PREFIX}/" "/ecs/${PREFIX}/" \
+                         "/aws/ecs/containerinsights/${PREFIX}-cluster/" \
+                         "/aws/rds/instance/${PREFIX}-"; do
+            for GROUP in $(aws logs describe-log-groups \
+                            --log-group-name-prefix "$PATTERN" \
+                            --query 'logGroups[].logGroupName' --output text); do
+              echo "deleting $GROUP"
+              aws logs delete-log-group --log-group-name "$GROUP" || true
+            done
+          done
+          echo "log group cleanup done"
+
   # --- 4. Purge the stores ----------------------------------------------------------
   # Terraform owns neither store, so both survive a destroy on purpose: you can
   # tear an environment down and bring it back with the same credentials. This
