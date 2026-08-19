@@ -1,12 +1,13 @@
 name: CI
 
-# Runs on every pull request into main, and on every push to main so that the
-# branch itself is always known to be green.
+# Runs on every pull request into develop or main, and on every push to either,
+# so both branches are always known to be green. develop is where dev deploys
+# from; main is where production deploys from.
 on:
   pull_request:
-    branches: [main]
+    branches: [develop, main]
   push:
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
   # Called by the delivery workflow, so that delivery runs the same checks
   # rather than a copy of them that can drift.
