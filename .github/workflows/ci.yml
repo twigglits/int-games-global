@@ -497,5 +497,17 @@ jobs:
           context: .
           file: embedding-atlas/Dockerfile
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # A scope of its own. Every other cache writer in this repository is
+          # scoped per service; this one was not, so it shared the default scope
+          # and its blobs collided with whatever else had already exported
+          # there. The reserve then failed and took a successful build with it:
+          #
+          #   #19 exporting to GitHub Actions Cache
+          #   ERROR: failed to reserve cache
+          #
+          # `ignore-error` is the second half. Writing a cache is an
+          # optimisation; failing to write one is not a reason to fail a build
+          # whose every layer compiled, and certainly not a reason to block a
+          # release. Buildx warns instead.
+          cache-from: type=gha,scope=embedding-atlas
+          cache-to: type=gha,mode=max,scope=embedding-atlas,ignore-error=true

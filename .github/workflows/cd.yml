@@ -218,7 +218,7 @@ jobs:
           load: true
           tags: ${{ matrix.service }}:scan-target
           cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }},ignore-error=true
 
       - name: Scan the image before it is pushed
         uses: aquasecurity/trivy-action@v0.36.0
@@ -244,7 +244,7 @@ jobs:
             ${{ steps.ecr.outputs.registry }}/movie-search-dev/${{ matrix.service }}:${{ env.IMAGE_TAG }}
             ${{ steps.ecr.outputs.registry }}/movie-search-dev/${{ matrix.service }}:build-${{ env.IMAGE_TAG }}
           cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }},ignore-error=true
           provenance: true
           sbom: true
 
