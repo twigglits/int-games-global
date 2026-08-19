@@ -2,13 +2,20 @@ name: CD
 
 # Delivery runs on a push to main, after CI has passed on the same commit.
 #
+#   develop:  ci  ─▶  create ECR  ─▶  push images  ─▶  deploy dev
+#   main:     ci  ─▶  create ECR  ─▶  push images  ─▶  deploy production
+#
+# One branch, one environment. A push to develop can never touch production and
+# a push to main never re-runs dev, which has already been exercised on develop.
+#
+#   (former single-branch flow, kept for reference)
 #   ci  ─▶  create ECR  ─▶  push images  ─▶  deploy dev  ─▶  smoke test dev  ─▶  approval  ─▶  deploy prod  ─▶  smoke test prod
 #
 # The approval gate is a GitHub environment with a required reviewer. GitHub
 # holds the job until somebody approves it; nothing here has to poll or sleep.
 on:
   push:
-    branches: [main]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       deploy_prod:
@@ -84,15 +91,38 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Init
-        working-directory: terraform/environments/dev
-        run: terraform init -input=false
-
       # -target is normally a smell. It is correct here: this is a bootstrap
       # step whose whole purpose is to bring one module up before the rest of
       # the graph can be built at all.
-      - name: Apply the ECR module only
+      #
+      # The dev registry is created on both branches, because it is where every
+      # image is built and pushed regardless of destination. Production does not
+      # rebuild; it copies the exact bytes dev was tested with, so the dev
+      # registry is the source even for a production release.
+      - name: Init the dev registry
         working-directory: terraform/environments/dev
+        run: terraform init -input=false
+
+      - name: Apply the ECR module (build registry)
+        working-directory: terraform/environments/dev
+        run: |
+          terraform apply -input=false -auto-approve -no-color \
+            -target=module.platform.module.ecr \
+            -var "image_tag=${{ github.sha }}"
+
+      # The production registry has to exist before deploy-prod copies into it.
+      # Its own `terraform apply` runs later in that job, which is too late:
+      # ECR does not create a repository on push, so the copy would fail with
+      # "The repository with name 'movie-search-prod/api' does not exist" — the
+      # same ordering fault the dev path hit on its first deployment.
+      - name: Init the production registry
+        if: github.ref == 'refs/heads/main'
+        working-directory: terraform/environments/prod
+        run: terraform init -input=false
+
+      - name: Apply the ECR module (production registry)
+        if: github.ref == 'refs/heads/main'
+        working-directory: terraform/environments/prod
         run: |
           terraform apply -input=false -auto-approve -no-color \
             -target=module.platform.module.ecr \
@@ -188,6 +218,11 @@ jobs:
   deploy-dev:
     name: Deploy to dev
     needs: [images]
+    # develop only. The `dev` GitHub environment also carries a branch policy
+    # that permits develop alone, so this condition and that policy have to
+    # agree before anything is deployed — the workflow states the intent, the
+    # environment enforces it even if the workflow is edited.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment:
       name: dev
@@ -296,8 +331,17 @@ jobs:
   # reviewers; the job waits for one of them before any step runs.
   deploy-prod:
     name: Deploy to production
-    needs: [deploy-dev]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.deploy_prod)
+    # `deploy-dev` is listed so that a run which does deploy dev still finishes
+    # it first. On main that job is skipped, and a skipped dependency would
+    # normally skip this one too — hence the explicit result checks rather than
+    # a bare `needs:`. `!cancelled()` keeps a cancelled run from continuing.
+    needs: [images, deploy-dev]
+    if: >-
+      !cancelled()
+      && needs.images.result == 'success'
+      && (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
+      && github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || inputs.deploy_prod)
     runs-on: ubuntu-latest
     environment:
       name: production

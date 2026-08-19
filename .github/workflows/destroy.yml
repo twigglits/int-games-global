@@ -8,10 +8,12 @@ name: Destroy
 # a push, a schedule, or another workflow. Deleting production infrastructure is
 # something a person decides, in a form, on purpose.
 #
-# Four things stand between the button and the deletion:
+# Five things stand between the button and the deletion:
 #
 #   1. You must type the environment name into `confirm`. A wrong value fails
 #      the guard job before any credential is assumed.
+#   1a. The branch must match the environment: dev is torn down from develop,
+#      production from main. Same rule the delivery workflow deploys by.
 #   2. Production needs a second phrase as well, so that muscle memory from
 #      tearing down dev cannot take production with it.
 #   3. A destroy plan runs first and is printed to the run summary, so the
@@ -85,6 +87,28 @@ jobs:
             exit 1
           fi
           echo "confirmation matches '$ENVIRONMENT'"
+
+      # Each environment is torn down from the branch it deploys from, so the
+      # ref you run this on has to match the environment you picked. Without
+      # this you could tear dev down from main, which is the branch that has
+      # nothing to do with dev — and the mismatch would only show up afterwards.
+      # The `<environment>-teardown` GitHub environments carry the same branch
+      # policy, so this check states the rule and the environment enforces it.
+      - name: The branch must match the environment
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          REF: ${{ github.ref }}
+        run: |
+          case "$ENVIRONMENT" in
+            dev)  WANT=refs/heads/develop ;;
+            prod) WANT=refs/heads/main ;;
+            *)    echo "::error::unknown environment '$ENVIRONMENT'"; exit 1 ;;
+          esac
+          if [ "$REF" != "$WANT" ]; then
+            echo "::error::'$ENVIRONMENT' is torn down from $WANT, but this run is on $REF. Re-run it with 'Use workflow from' set to that branch."
+            exit 1
+          fi
+          echo "branch $REF is correct for '$ENVIRONMENT'"
 
       # Production asks for a sentence rather than a word. Typing "prod" twice is
       # something you can do without reading; typing this is not.
