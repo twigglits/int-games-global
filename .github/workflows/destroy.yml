@@ -188,14 +188,27 @@ jobs:
         id: tag
         working-directory: terraform/environments/${{ inputs.environment }}
         run: |
-          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            # A destroy plan emits only deletes, so this value reaches no task
-            # definition. It only has to exist, and to survive prod's validation
-            # — which rejects "latest" and nothing else.
-            TAG="teardown-placeholder"
-            echo "::warning::No image_tag in state. Planning with '$TAG'."
-          fi
+          # `terraform output` prints its "No outputs found" warning on STDOUT
+          # and still exits 0, so `2>/dev/null` does not suppress it and the
+          # emptiness check never fires — TAG ends up holding a multi-line box
+          # drawing, which then breaks $GITHUB_OUTPUT:
+          #
+          #   Unable to process file command 'output' successfully.
+          #   Invalid format '| Warning: No outputs found'
+          #
+          # That happens the moment a previous destroy has emptied the state.
+          # So take the first line only, and accept it solely if it looks like a
+          # tag. Anything else is treated as absent.
+          TAG="$(terraform output -raw image_tag 2>/dev/null | head -n1 | tr -d '\r' || true)"
+          case "$TAG" in
+            ''|null|*[!A-Za-z0-9._-]*)
+              # A destroy plan emits only deletes, so this value reaches no
+              # task definition. It only has to exist, and to survive prod's
+              # validation — which rejects "latest" and nothing else.
+              TAG="teardown-placeholder"
+              echo "::warning::No usable image_tag in state. Planning with '$TAG'."
+              ;;
+          esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image tag for the destroy plan: $TAG"
 
@@ -310,11 +323,24 @@ jobs:
           # The apply below has to satisfy every required variable. Reading the
           # tag back from state means the disarm cannot accidentally roll the
           # services onto a different image.
-          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            TAG="teardown-placeholder"
-            echo "::warning::No image_tag in state. Using '$TAG'; -target means it reaches no task definition."
-          fi
+          # `terraform output` prints its "No outputs found" warning on STDOUT
+          # and still exits 0, so `2>/dev/null` does not suppress it and the
+          # emptiness check never fires — TAG ends up holding a multi-line box
+          # drawing, which then breaks $GITHUB_OUTPUT:
+          #
+          #   Unable to process file command 'output' successfully.
+          #   Invalid format '| Warning: No outputs found'
+          #
+          # That happens the moment a previous destroy has emptied the state.
+          # So take the first line only, and accept it solely if it looks like a
+          # tag. Anything else is treated as absent.
+          TAG="$(terraform output -raw image_tag 2>/dev/null | head -n1 | tr -d '\r' || true)"
+          case "$TAG" in
+            ''|null|*[!A-Za-z0-9._-]*)
+              TAG="teardown-placeholder"
+              echo "::warning::No usable image_tag in state. Using '$TAG'; -target means it reaches no task definition."
+              ;;
+          esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image tag for the disarm apply: $TAG"
 
