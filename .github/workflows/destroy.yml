@@ -288,7 +288,18 @@ jobs:
       # is Terraform doing the disarming, declaratively, rather than a CLI call
       # reaching around it.
       #
-      # `-target` keeps the apply to exactly those two resources. Targeting is a
+      # ECR fails in exactly the same shape, and for the same reason. Its
+      # `force_delete` is computed from `force_destroy` too, so state still
+      # holds `false` from the last real deploy and DeleteRepository comes back:
+      #
+      #   RepositoryNotEmptyException: The repository with name
+      #   'movie-search-prod/api' ... cannot be deleted because it still
+      #   contains images
+      #
+      # The whole module is targeted rather than the four repositories by name,
+      # so adding a service to `repository_names` needs no change here.
+      #
+      # `-target` keeps the apply to exactly these resources. Targeting is a
       # blunt instrument and Terraform says so, but this is the case it exists
       # for: a deliberate, surgical change to named resources that must land
       # before a wider operation.
@@ -316,7 +327,8 @@ jobs:
             -var force_destroy=true \
             -var "image_tag=$IMAGE_TAG" \
             -target=module.platform.module.rds.aws_db_instance.this \
-            -target=module.platform.module.alb.aws_lb.this
+            -target=module.platform.module.alb.aws_lb.this \
+            -target=module.platform.module.ecr
 
       # Scaling to zero is genuinely a runtime operation, not a config change:
       # `desired_count` is managed by autoscaling and Terraform ignores drift on
