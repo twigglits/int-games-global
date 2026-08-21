@@ -344,17 +344,45 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image tag for the disarm apply: $TAG"
 
+      # Only disarm what is actually in state.
+      #
+      # This is an APPLY. `-target` on an address that state does not hold is
+      # not a no-op — it is a CREATE, and terraform will build the resource and
+      # every dependency it needs. Run this workflow against an environment a
+      # previous run already emptied and the "disarm" rebuilds the stack it is
+      # supposed to be tearing down: prod is a multi-AZ db.r7g.large, so that is
+      # twenty minutes of provisioning a database in order to delete it again.
+      #
+      # `terraform state list <address>` prints nothing for an address state
+      # does not hold, so it answers exactly the right question. A fully
+      # deployed environment still gets all three targets, as before.
       - name: Disarm the deletion guards
         working-directory: terraform/environments/${{ inputs.environment }}
         env:
           IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
+          TARGETS=""
+          for t in module.platform.module.rds.aws_db_instance.this \
+                   module.platform.module.alb.aws_lb.this \
+                   module.platform.module.ecr; do
+            if [ -n "$(terraform state list "$t" 2>/dev/null)" ]; then
+              TARGETS="$TARGETS -target=$t"
+              echo "  will disarm $t"
+            else
+              echo "  skipping $t — not in state"
+            fi
+          done
+
+          if [ -z "$TARGETS" ]; then
+            echo "::notice::Nothing in state to disarm."
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
           terraform apply -input=false -auto-approve -no-color \
             -var force_destroy=true \
             -var "image_tag=$IMAGE_TAG" \
-            -target=module.platform.module.rds.aws_db_instance.this \
-            -target=module.platform.module.alb.aws_lb.this \
-            -target=module.platform.module.ecr
+            $TARGETS
 
       # Scaling to zero is genuinely a runtime operation, not a config change:
       # `desired_count` is managed by autoscaling and Terraform ignores drift on
