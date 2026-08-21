@@ -172,13 +172,44 @@ jobs:
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform init -input=false
 
+      # A destroy plan still has to satisfy every required variable, and prod
+      # deliberately gives `image_tag` no default — an explicit commit SHA is
+      # the whole point in production. Dev defaults it to "latest", so every dev
+      # teardown planned cleanly and the first prod one died here:
+      #
+      #   Error: No value for required variable
+      #     on variables.tf line 12:
+      #     12: variable "image_tag" {
+      #
+      # Reading the tag back from state is what the destroy job already does,
+      # for the same reason. The value is sitting in the `image_tag` output; the
+      # plan should describe the stack as it is actually deployed.
+      - name: Read the deployed image tag
+        id: tag
+        working-directory: terraform/environments/${{ inputs.environment }}
+        run: |
+          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
+          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
+            # A destroy plan emits only deletes, so this value reaches no task
+            # definition. It only has to exist, and to survive prod's validation
+            # — which rejects "latest" and nothing else.
+            TAG="teardown-placeholder"
+            echo "::warning::No image_tag in state. Planning with '$TAG'."
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image tag for the destroy plan: $TAG"
+
       # `-lock=false`: a plan changes nothing, and taking the lock here would
       # block the destroy job that follows it.
       - name: Plan
         working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           terraform plan -destroy -input=false -lock=false -no-color \
-            -var force_destroy=true -out=destroy.tfplan
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG" \
+            -out=destroy.tfplan
 
       - name: Count and summarise
         id: count
