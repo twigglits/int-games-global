@@ -338,11 +338,18 @@ jobs:
             aws ecs wait services-stable --cluster "$CLUSTER" --services "$s" 2>/dev/null || true
           done
 
+      # `image_tag` again, for the same reason the plan and the disarm need it:
+      # prod gives it no default, and terraform refuses to do ANYTHING — destroy
+      # included — until every required variable has a value. It is read from
+      # state above; a destroy emits only deletes, so the value reaches nothing.
       - name: Destroy
         working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           terraform destroy -input=false -auto-approve -no-color \
-            -var force_destroy=true
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG"
 
       # A DependencyViolation on a subnet or security group usually means an ENI
       # was still detaching when Terraform tried to delete it. Retrying once
@@ -351,10 +358,14 @@ jobs:
       - name: Retry once if anything is left
         if: failure()
         working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           echo "::warning::First destroy did not complete. Waiting 60s and retrying once."
           sleep 60
-          terraform destroy -input=false -auto-approve -no-color -var force_destroy=true
+          terraform destroy -input=false -auto-approve -no-color \
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG"
 
       # Delete the log groups Terraform owns but could not remove.
       #
