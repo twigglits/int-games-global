@@ -188,14 +188,27 @@ jobs:
         id: tag
         working-directory: terraform/environments/${{ inputs.environment }}
         run: |
-          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            # A destroy plan emits only deletes, so this value reaches no task
-            # definition. It only has to exist, and to survive prod's validation
-            # — which rejects "latest" and nothing else.
-            TAG="teardown-placeholder"
-            echo "::warning::No image_tag in state. Planning with '$TAG'."
-          fi
+          # `terraform output` prints its "No outputs found" warning on STDOUT
+          # and still exits 0, so `2>/dev/null` does not suppress it and the
+          # emptiness check never fires — TAG ends up holding a multi-line box
+          # drawing, which then breaks $GITHUB_OUTPUT:
+          #
+          #   Unable to process file command 'output' successfully.
+          #   Invalid format '| Warning: No outputs found'
+          #
+          # That happens the moment a previous destroy has emptied the state.
+          # So take the first line only, and accept it solely if it looks like a
+          # tag. Anything else is treated as absent.
+          TAG="$(terraform output -raw image_tag 2>/dev/null | head -n1 | tr -d '\r' || true)"
+          case "$TAG" in
+            ''|null|*[!A-Za-z0-9._-]*)
+              # A destroy plan emits only deletes, so this value reaches no
+              # task definition. It only has to exist, and to survive prod's
+              # validation — which rejects "latest" and nothing else.
+              TAG="teardown-placeholder"
+              echo "::warning::No usable image_tag in state. Planning with '$TAG'."
+              ;;
+          esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image tag for the destroy plan: $TAG"
 
@@ -288,7 +301,18 @@ jobs:
       # is Terraform doing the disarming, declaratively, rather than a CLI call
       # reaching around it.
       #
-      # `-target` keeps the apply to exactly those two resources. Targeting is a
+      # ECR fails in exactly the same shape, and for the same reason. Its
+      # `force_delete` is computed from `force_destroy` too, so state still
+      # holds `false` from the last real deploy and DeleteRepository comes back:
+      #
+      #   RepositoryNotEmptyException: The repository with name
+      #   'movie-search-prod/api' ... cannot be deleted because it still
+      #   contains images
+      #
+      # The whole module is targeted rather than the four repositories by name,
+      # so adding a service to `repository_names` needs no change here.
+      #
+      # `-target` keeps the apply to exactly these resources. Targeting is a
       # blunt instrument and Terraform says so, but this is the case it exists
       # for: a deliberate, surgical change to named resources that must land
       # before a wider operation.
@@ -299,24 +323,66 @@ jobs:
           # The apply below has to satisfy every required variable. Reading the
           # tag back from state means the disarm cannot accidentally roll the
           # services onto a different image.
-          TAG="$(terraform output -raw image_tag 2>/dev/null || true)"
-          if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
-            TAG="teardown-placeholder"
-            echo "::warning::No image_tag in state. Using '$TAG'; -target means it reaches no task definition."
-          fi
+          # `terraform output` prints its "No outputs found" warning on STDOUT
+          # and still exits 0, so `2>/dev/null` does not suppress it and the
+          # emptiness check never fires — TAG ends up holding a multi-line box
+          # drawing, which then breaks $GITHUB_OUTPUT:
+          #
+          #   Unable to process file command 'output' successfully.
+          #   Invalid format '| Warning: No outputs found'
+          #
+          # That happens the moment a previous destroy has emptied the state.
+          # So take the first line only, and accept it solely if it looks like a
+          # tag. Anything else is treated as absent.
+          TAG="$(terraform output -raw image_tag 2>/dev/null | head -n1 | tr -d '\r' || true)"
+          case "$TAG" in
+            ''|null|*[!A-Za-z0-9._-]*)
+              TAG="teardown-placeholder"
+              echo "::warning::No usable image_tag in state. Using '$TAG'; -target means it reaches no task definition."
+              ;;
+          esac
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "image tag for the disarm apply: $TAG"
 
+      # Only disarm what is actually in state.
+      #
+      # This is an APPLY. `-target` on an address that state does not hold is
+      # not a no-op — it is a CREATE, and terraform will build the resource and
+      # every dependency it needs. Run this workflow against an environment a
+      # previous run already emptied and the "disarm" rebuilds the stack it is
+      # supposed to be tearing down: prod is a multi-AZ db.r7g.large, so that is
+      # twenty minutes of provisioning a database in order to delete it again.
+      #
+      # `terraform state list <address>` prints nothing for an address state
+      # does not hold, so it answers exactly the right question. A fully
+      # deployed environment still gets all three targets, as before.
       - name: Disarm the deletion guards
         working-directory: terraform/environments/${{ inputs.environment }}
         env:
           IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
+          TARGETS=""
+          for t in module.platform.module.rds.aws_db_instance.this \
+                   module.platform.module.alb.aws_lb.this \
+                   module.platform.module.ecr; do
+            if [ -n "$(terraform state list "$t" 2>/dev/null)" ]; then
+              TARGETS="$TARGETS -target=$t"
+              echo "  will disarm $t"
+            else
+              echo "  skipping $t — not in state"
+            fi
+          done
+
+          if [ -z "$TARGETS" ]; then
+            echo "::notice::Nothing in state to disarm."
+            exit 0
+          fi
+
+          # shellcheck disable=SC2086
           terraform apply -input=false -auto-approve -no-color \
             -var force_destroy=true \
             -var "image_tag=$IMAGE_TAG" \
-            -target=module.platform.module.rds.aws_db_instance.this \
-            -target=module.platform.module.alb.aws_lb.this
+            $TARGETS
 
       # Scaling to zero is genuinely a runtime operation, not a config change:
       # `desired_count` is managed by autoscaling and Terraform ignores drift on
@@ -338,11 +404,18 @@ jobs:
             aws ecs wait services-stable --cluster "$CLUSTER" --services "$s" 2>/dev/null || true
           done
 
+      # `image_tag` again, for the same reason the plan and the disarm need it:
+      # prod gives it no default, and terraform refuses to do ANYTHING — destroy
+      # included — until every required variable has a value. It is read from
+      # state above; a destroy emits only deletes, so the value reaches nothing.
       - name: Destroy
         working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           terraform destroy -input=false -auto-approve -no-color \
-            -var force_destroy=true
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG"
 
       # A DependencyViolation on a subnet or security group usually means an ENI
       # was still detaching when Terraform tried to delete it. Retrying once
@@ -351,10 +424,14 @@ jobs:
       - name: Retry once if anything is left
         if: failure()
         working-directory: terraform/environments/${{ inputs.environment }}
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           echo "::warning::First destroy did not complete. Waiting 60s and retrying once."
           sleep 60
-          terraform destroy -input=false -auto-approve -no-color -var force_destroy=true
+          terraform destroy -input=false -auto-approve -no-color \
+            -var force_destroy=true \
+            -var "image_tag=$IMAGE_TAG"
 
       # Delete the log groups Terraform owns but could not remove.
       #
