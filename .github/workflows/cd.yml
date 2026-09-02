@@ -14,6 +14,7 @@ name: CD
 # The approval gate is a GitHub environment with a required reviewer. GitHub
 # holds the job until somebody approves it; nothing here has to poll or sleep.
 on:
+<<<<<<< Updated upstream
   # develop deploys dev, main deploys production.
   #
   # Production is still only reachable by merging a pull request from develop —
@@ -28,8 +29,18 @@ on:
   # the OIDC subject the deployment role trusts, the `production` environment's
   # branch policy, and the registry bootstrap's own condition. Expressing the
   # rule once, in branch protection, costs none of that.
+=======
+  # dev deploys on every push to develop.
+>>>>>>> Stashed changes
   push:
-    branches: [develop, main]
+    branches: [develop]
+  # Production deploys only when a pull request into main is MERGED, and only
+  # when it came from develop. A direct push to main triggers nothing at all —
+  # there is deliberately no `push: main` here. That is the point: production is
+  # reached by promoting develop through review, not by pushing.
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       deploy_prod:
@@ -53,8 +64,16 @@ env:
   TERRAFORM_VERSION: "1.14.0"
   # The commit this run delivers, and the tag every image carries.
   #
+<<<<<<< Updated upstream
   # Every image, plan and deployment in this run is identified by one commit.
   IMAGE_TAG: ${{ github.sha }}
+=======
+  # On a merged pull request `github.sha` is the merge *preview* commit, which
+  # does not exist on main — tagging images with it would leave production
+  # running bytes traceable to no branch. `merge_commit_sha` is the real commit
+  # that landed. Everything downstream uses IMAGE_TAG so all paths agree.
+  IMAGE_TAG: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || github.sha }}
+>>>>>>> Stashed changes
 
 jobs:
   # --- 1. Everything CI does ----------------------------------------------------
@@ -62,6 +81,15 @@ jobs:
   # drift apart.
   ci:
     name: CI
+    # A pull request that was closed WITHOUT being merged, or merged from some
+    # branch other than develop, is not a delivery. Stopping here rather than in
+    # each deploy job means `ecr` and `images` skip with it — a skipped
+    # dependency skips its dependents — so no build runs for a run that can
+    # never deploy.
+    if: >-
+      github.event_name != 'pull_request'
+      || (github.event.pull_request.merged == true
+          && github.event.pull_request.head.ref == 'develop')
     uses: ./.github/workflows/ci.yml
     # A called workflow's jobs cannot ask for more than the caller grants them,
     # and the run fails at startup — before any step — if they do. So this list
@@ -98,6 +126,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+<<<<<<< Updated upstream
+=======
+          # The commit being delivered, not the event's default ref. On a
+          # merged pull request that default is the merge preview, which is
+          # not the commit that landed on main.
+>>>>>>> Stashed changes
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -172,6 +206,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+<<<<<<< Updated upstream
+=======
+          # The commit being delivered, not the event's default ref. On a
+          # merged pull request that default is the merge preview, which is
+          # not the commit that landed on main.
+>>>>>>> Stashed changes
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -254,6 +294,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+<<<<<<< Updated upstream
+=======
+          # The commit being delivered, not the event's default ref. On a
+          # merged pull request that default is the merge preview, which is
+          # not the commit that landed on main.
+>>>>>>> Stashed changes
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
@@ -361,12 +407,19 @@ jobs:
     # normally skip this one too — hence the explicit result checks rather than
     # a bare `needs:`. `!cancelled()` keeps a cancelled run from continuing.
     needs: [images, deploy-dev]
+    # Production is reached one way: a pull request from develop into main that
+    # was actually merged. `workflow_dispatch` with deploy_prod stays as the
+    # break-glass path for a redeploy without a code change.
     if: >-
       !cancelled()
       && needs.images.result == 'success'
       && (needs.deploy-dev.result == 'success' || needs.deploy-dev.result == 'skipped')
-      && github.ref == 'refs/heads/main'
-      && (github.event_name == 'push' || inputs.deploy_prod)
+      && (
+           (github.event_name == 'pull_request'
+            && github.event.pull_request.merged == true
+            && github.event.pull_request.head.ref == 'develop')
+           || (github.event_name == 'workflow_dispatch' && inputs.deploy_prod)
+         )
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -375,6 +428,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+<<<<<<< Updated upstream
+=======
+          # The commit being delivered, not the event's default ref. On a
+          # merged pull request that default is the merge preview, which is
+          # not the commit that landed on main.
+>>>>>>> Stashed changes
           ref: ${{ env.IMAGE_TAG }}
 
       - name: Assume the deployment role
