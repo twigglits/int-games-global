@@ -115,6 +115,13 @@ resource "aws_acm_certificate_validation" "this" {
 
   certificate_arn         = aws_acm_certificate.this[0].arn
   validation_record_fqdns = [for record in aws_route53_record.validation : record.fqdn]
+
+  # DNS validation normally finishes in a few minutes. The provider default of
+  # 75 minutes outlives the deploy role's session, so an undelegated domain
+  # burns the credentials and the apply cannot write its state back.
+  timeouts {
+    create = "15m"
+  }
 }
 
 locals {
